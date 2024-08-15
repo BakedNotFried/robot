@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>robot</name>
+  <version>0.0.0</version>
+  <description>My Robot</description>
+  <maintainer email="n9681345@qut.edu.au">Cal Bennie</maintainer>
+  <license>BSD</license>
+  <author email="n9681345@qut.edu.au">Cal Bennie</author>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>interbotix_common_modules</depend>
+  <depend>interbotix_ros_slate</depend>
+  <depend>interbotix_xs_modules</depend>
+  <depend>interbotix_xs_msgs</depend>
+  <depend>interbotix_xsarm_control</depend>
+  <depend>joy</depend>
+  <depend>rclpy</depend>
+  <depend>realsense2_camera</depend>
+  <depend>rviz2</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>teleop_twist_joy</depend>
+  <depend>tf2_ros</depend>
+  <depend>usb_cam</depend>
+  <depend>omni_common</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

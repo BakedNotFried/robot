@@ -1,0 +1,69 @@
+/**:
+  camera:
+    ros__parameters:
+      initial_reset: true
+      enable_color: true
+      enable_depth: false
+      enable_infra1: false
+      enable_infra2: false
+      enable_rgbd: false
+      enable_gyro: false
+      enable_accel: false
+      enable_pointcloud: false
+      enable_sync: false
+      enable_color_metadata: false
+      enable_depth_to_color_extrinsics: false
+      image_transport: 'raw'
+      depth_module:
+        color_profile: '640,480,60' # See available profiles below
+        color_format: 'RGB8'
+        enable_auto_exposure: false
+      camera:
+        color:
+          image_rect_raw:
+            enable_pub_plugins: ['image_transport/raw']
+
+$(var cam_overhead_name):
+  camera:
+    ros__parameters:
+      serial_no: "317222071463"
+
+$(var cam_field_name):
+  camera:
+    ros__parameters:
+      serial_no: "032522250135"
+
+$(var cam_wrist_name):
+  camera:
+    ros__parameters:
+      serial_no: "036422070913"
+
+# Available profiles:
+# 1280,720,15
+# 1280,720,30
+# 1280,720,5
+# 424,240,15
+# 424,240,30
+# 424,240,5
+# 424,240,60
+# 424,240,90
+# 480,270,15
+# 480,270,30
+# 480,270,5
+# 480,270,60
+# 480,270,90
+# 640,360,15
+# 640,360,30
+# 640,360,5
+# 640,360,60
+# 640,360,90
+# 640,480,15
+# 640,480,30
+# 640,480,5
+# 640,480,60
+# 640,480,90
+# 848,480,15
+# 848,480,30
+# 848,480,5
+# 848,480,60
+# 848,480,90

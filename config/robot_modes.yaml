@@ -1,0 +1,4 @@
+omni_name: phantom
+publish_rate: 100
+reference_frame: /map
+units: m
