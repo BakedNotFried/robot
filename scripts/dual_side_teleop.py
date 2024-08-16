@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from aloha.constants import (
+from robot.constants import (
     DT_DURATION,
     FOLLOWER_GRIPPER_JOINT_CLOSE,
     LEADER2FOLLOWER_JOINT_FN,
@@ -8,7 +8,7 @@ from aloha.constants import (
     LEADER_GRIPPER_JOINT_MID,
     START_ARM_POSE,
 )
-from aloha.robot_utils import (
+from robot.robot_utils import (
     get_arm_gripper_positions,
     move_arms,
     move_grippers,
