@@ -14,9 +14,9 @@ import robot.transform_utils as tr
 from robot.keyboard_interface import KeyboardInterface
 
 from robot.constants import (
-    FOLLOWER_GRIPPER_JOINT_OPEN,
-    FOLLOWER_GRIPPER_JOINT_CLOSE,
-    FOLLOWER_GRIPPER_JOINT_MID,
+    ROBOT_GRIPPER_JOINT_OPEN,
+    ROBOT_GRIPPER_JOINT_CLOSE_MAX,
+    ROBOT_GRIPPER_JOINT_MID,
     START_ARM_POSE,
 )
 from robot.robot_utils import (
@@ -24,9 +24,9 @@ from robot.robot_utils import (
     torque_on,
 )
 
-class TeleopRobot(InterbotixRobotNode):
+class RobotTeleop(InterbotixRobotNode):
     def __init__(self):
-        super().__init__(node_name='teleop_robot')
+        super().__init__(node_name='robot_teleop')
         
         # Init Robot
         self.robot = InterbotixManipulatorXS(
@@ -35,12 +35,10 @@ class TeleopRobot(InterbotixRobotNode):
             node=self,
             iterative_update_fk=False,
         )
-        self.robot_gripper_command = JointSingleCommand(name='gripper')
         self.robot_description: mrd.ModernRoboticsDescription = getattr(mrd, "wx250s")
+        self.robot_gripper_cmd = JointSingleCommand(name='gripper')
 
-        time.sleep(1)
         self.robot_startup()
-        time.sleep(1)
         
         # Keyboard Interface. For lock/unlock control via a/s keys
         self.kb = KeyboardInterface()
@@ -53,18 +51,17 @@ class TeleopRobot(InterbotixRobotNode):
         # Scale Factor. For smoother control
         self.xyz_scale = 2.5
 
-        # Establish the initial joint angles. This is related to a bug with joint angle error on measure.
-        self.robot_state = self.robot.core.joint_states.position
-        self.joint_angles = START_ARM_POSE[:6]
+        # Establish the initial joint angless
+        self.arm_joint_angles = START_ARM_POSE[:6]
         self.robot.arm.set_joint_positions(START_ARM_POSE[:6], blocking=False)
-        self.gripper_angle = FOLLOWER_GRIPPER_JOINT_MID
-        self.robot_gripper_command.cmd = self.gripper_angle
-        self.robot.gripper.core.pub_single.publish(self.robot_gripper_command)
+        self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
+        self.robot_gripper_cmd.cmd = self.gripper_joint
+        self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
 
-        # Subs
+        # Omni Teleoperation State Callback
         self.create_subscription(OmniState, '/omni/state', self.tele_state_callback, 1)
         
-        # Timer
+        # Control Loop Timer
         hz = 50
         dt = 1/hz
         self.teleop_control_timer = self.create_timer(dt, self.teleop_control)
@@ -138,6 +135,7 @@ class TeleopRobot(InterbotixRobotNode):
 
     def teleop_control(self):
         if self.tele_state:
+            # self.start = time.time()
             # Get the current teleoperate states. 
             curr_tele_xyz = self.tele_state[0:3]
             curr_tele_xyz = [self.xyz_scale * e for e in curr_tele_xyz]
@@ -145,6 +143,7 @@ class TeleopRobot(InterbotixRobotNode):
             open_gripper = self.tele_state[6]
             close_gripper = self.tele_state[7]
 
+            # On the first run, set the previous states and do nothing
             if self.first_run:
                 print('first run')
                 self.prev_tele_xyz = curr_tele_xyz
@@ -152,7 +151,7 @@ class TeleopRobot(InterbotixRobotNode):
                 self.first_run = False
                 return
             
-            # Update Lock
+            # Update Lock/Unlock of the arm via keyboard interface
             self.kb.update()
             if self.kb.lock_robot:
                 print('locked')
@@ -162,17 +161,17 @@ class TeleopRobot(InterbotixRobotNode):
             
             # Gripper Control
             if open_gripper:
-                self.gripper_angle += self.gripper_delta
-                if self.gripper_angle > FOLLOWER_GRIPPER_JOINT_OPEN:
-                    self.gripper_angle = FOLLOWER_GRIPPER_JOINT_OPEN
-                self.robot_gripper_command.cmd = self.gripper_angle
-                self.robot.gripper.core.pub_single.publish(self.robot_gripper_command)
+                self.gripper_joint += self.gripper_delta
+                if self.gripper_joint > ROBOT_GRIPPER_JOINT_OPEN:
+                    self.gripper_joint = ROBOT_GRIPPER_JOINT_OPEN
+                self.robot_gripper_cmd.cmd = self.gripper_joint
+                self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
             if close_gripper:
-                self.gripper_angle -= self.gripper_delta
-                if self.gripper_angle < FOLLOWER_GRIPPER_JOINT_CLOSE:
-                    self.gripper_angle = FOLLOWER_GRIPPER_JOINT_CLOSE
-                self.robot_gripper_command.cmd = self.gripper_angle
-                self.robot.gripper.core.pub_single.publish(self.robot_gripper_command)
+                self.gripper_joint -= self.gripper_delta
+                if self.gripper_joint < ROBOT_GRIPPER_JOINT_CLOSE_MAX:
+                    self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
+                self.robot_gripper_cmd.cmd = self.gripper_joint
+                self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
 
             # Calculate deltas
             tele_xyz_delta = [curr - prev  for curr, prev in zip(curr_tele_xyz, self.prev_tele_xyz)]
@@ -185,20 +184,21 @@ class TeleopRobot(InterbotixRobotNode):
             
             # X, Y, Z control
             if not (tele_xyz_delta == [0, 0, 0]):
-                print('here')
-                current_ee_pose = self.FKin(self.joint_angles)
+                current_ee_pose = self.FKin(self.arm_joint_angles)
                 xyz_transform = tr.RpToTrans(tr.eulerAnglesToRotationMatrix([0, 0, 0]), tele_xyz_delta)
                 move_xyz = xyz_transform.dot(current_ee_pose)
                 # move_xyz = np.dot(current_ee_pose, xyz_transform)
-                self.joint_angles, _ = self.IKin(move_xyz, custom_guess=self.joint_angles)
+                self.arm_joint_angles, _ = self.IKin(move_xyz, custom_guess=self.arm_joint_angles)
 
             # Roll, Pitch and Yaw control
             if not (tele_rpy_delta == [0, 0, 0]):
                 joint_angle_delta = [0, 0, 0, tele_rpy_delta[2], tele_rpy_delta[1], tele_rpy_delta[0]]
-                self.joint_angles = [a + b for a, b in zip(self.joint_angles, joint_angle_delta)]
+                self.arm_joint_angles = [a + b for a, b in zip(self.arm_joint_angles, joint_angle_delta)]
 
+            # self.end = time.time()
+            # print(1/(self.end-self.start))
             # Robot State Update
-            self.robot.arm.set_joint_positions(self.joint_angles, blocking=False)
+            self.robot.arm.set_joint_positions(self.arm_joint_angles, blocking=False)
 
             # Set the prev
             self.prev_tele_xyz = curr_tele_xyz
@@ -212,9 +212,9 @@ def main(args=None):
     rclpy.init(args=args)
     
     try:
-        teleop_robot = TeleopRobot()
+        robot_teleop = RobotTeleop()
         executor = SingleThreadedExecutor()
-        executor.add_node(teleop_robot)
+        executor.add_node(robot_teleop)
         
         try:
             executor.spin()
@@ -222,7 +222,7 @@ def main(args=None):
             pass
         finally:
             executor.shutdown()
-            teleop_robot.destroy_node()
+            robot_teleop.destroy_node()
     finally:
         rclpy.shutdown()
 

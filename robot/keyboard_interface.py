@@ -8,27 +8,28 @@ PURPLE = (255, 0, 255)
 
 KEY_START_CONTROL = pygame.K_q
 KEY_START_RECORDING = pygame.K_w
-KEY_QUIT_RECORDING = pygame.K_e
-KEY_SAVE_RECORDING = pygame.K_r
-KEY_DISCARD_RECORDING = pygame.K_t
+KEY_SAVE_RECORDING = pygame.K_e
+KEY_DISCARD_RECORDING = pygame.K_r
+KEY_IDLE = pygame.K_t
 
 KEY_LOCK_ROBOT = pygame.K_a
 KEY_UNLOCK_ROBOT = pygame.K_s
 
-START = 0
+CONTROL = 0
 RECORDING = 1
-QUIT = 2
-SAVE = 3
-DISCARD = 4
+SAVE = 2
+DISCARD = 3
+IDLE = 4
 
 
 class KeyboardInterface:
     def __init__(self):
         pygame.init()
-        self._screen = pygame.display.set_mode((800, 800))
+        self._screen = pygame.display.set_mode((400, 400))
         self._set_color(NORMAL)
 
-        self.record_state = None
+        self.record_state = IDLE
+        self.prev_record_state = IDLE
         self.lock_robot = True
 
 
@@ -39,15 +40,15 @@ class KeyboardInterface:
             self.lock_robot = True
         elif KEY_UNLOCK_ROBOT in pressed_last:
             self.lock_robot = False
+        elif KEY_IDLE in pressed_last:
+            self._set_color(NORMAL)
+            self.record_state = IDLE
         elif KEY_START_CONTROL in pressed_last:
             self._set_color(GREEN)
-            self.record_state = START
+            self.record_state = CONTROL
         elif KEY_START_RECORDING in pressed_last:
             self._set_color(BLUE)
             self.record_state = RECORDING
-        elif KEY_QUIT_RECORDING in pressed_last:
-            self._set_color(RED)
-            self.record_state = QUIT
         elif KEY_SAVE_RECORDING in pressed_last:
             self._set_color(PURPLE)
             self.record_state = SAVE
@@ -71,15 +72,13 @@ class KeyboardInterface:
 
 
 def main():
-    kb = KBInterface()
+    kb = KeyboardInterface()
     while True:
         kb.update()
-        if kb.record_state == START:
-            print("Start")
+        if kb.record_state == CONTROL:
+            print("CONTROL")
         elif kb.record_state == RECORDING:
             print("Recording")
-        elif kb.record_state == QUIT:
-            print("Quit")
         elif kb.record_state == SAVE:
             print("Save")
         elif kb.record_state == DISCARD:
