@@ -14,10 +14,8 @@ FPS = 50
 
 JOINT_NAMES = ['waist', 'shoulder', 'elbow', 'forearm_roll', 'wrist_angle', 'wrist_rotate']
 START_ARM_POSE = [
-    0.0, -0.96, 1.16, 0.0, -0.3, 0.0, 0.02239, -0.02239,
-    0.0, -0.96, 1.16, 0.0, -0.3, 0.0, 0.02239, -0.02239,
+    0 , -0.76238847,  0.44485444, -0.01994175,  1.7564081,  -0.15953401, 0.02239, -0.02239
 ]
-
 FOLLOWER_GRIPPER_JOINT_OPEN_MAX = 1.9957
 FOLLOWER_GRIPPER_JOINT_OPEN = 1.6214
 FOLLOWER_GRIPPER_JOINT_CLOSE = 0.6197
