@@ -11,10 +11,11 @@ from interbotix_xs_msgs.msg import JointSingleCommand
 from omni_msgs.msg import OmniState
 
 import robot.transform_utils as tr
+from robot.keyboard_interface import KeyboardInterface
 
 from robot.constants import (
-    FOLLOWER_GRIPPER_JOINT_OPEN_MAX,
-    FOLLOWER_GRIPPER_JOINT_CLOSE_MAX,
+    FOLLOWER_GRIPPER_JOINT_OPEN,
+    FOLLOWER_GRIPPER_JOINT_CLOSE,
     FOLLOWER_GRIPPER_JOINT_MID,
     START_ARM_POSE,
 )
@@ -38,16 +39,15 @@ class TeleopRobot(InterbotixRobotNode):
         self.robot_description: mrd.ModernRoboticsDescription = getattr(mrd, "wx250s")
 
         time.sleep(1)
-        self.opening_ceremony()
+        self.robot_startup()
         time.sleep(1)
         
+        # Keyboard Interface. For lock/unlock control via a/s keys
+        self.kb = KeyboardInterface()
+
         # Fields
         self.tele_state = None  # x, y, z, r, p, y, open_gripper, close_gripper
-        self.curr_tele_xyz = None
-        self.curr_tele_rpy = None
-        self.prev_tele_xyz = None
-        self.prev_tele_rpy = None
-        self.gripper_delta = 0.05
+        self.gripper_delta = 0.05   # For altering gripper on update
         self.first_run = True
 
         # Scale Factor. For smoother control
@@ -107,7 +107,7 @@ class TeleopRobot(InterbotixRobotNode):
         return theta_list, False
     
 
-    def opening_ceremony(self):
+    def robot_startup(self):
         """Move robot arm to start demonstration pose"""
         # reboot gripper motors, and set operating modes for all motors
         self.robot.core.robot_reboot_motors('single', 'gripper', True)
@@ -138,48 +138,49 @@ class TeleopRobot(InterbotixRobotNode):
 
     def teleop_control(self):
         if self.tele_state:
-            # Control
-            self.curr_tele_xyz = self.tele_state[0:3]
-            self.curr_tele_xyz = [self.xyz_scale * e for e in self.curr_tele_xyz]
-            self.curr_tele_rpy = self.tele_state[3:6]
+            # Get the current teleoperate states. 
+            curr_tele_xyz = self.tele_state[0:3]
+            curr_tele_xyz = [self.xyz_scale * e for e in curr_tele_xyz]
+            curr_tele_rpy = self.tele_state[3:6]
             open_gripper = self.tele_state[6]
             close_gripper = self.tele_state[7]
 
             if self.first_run:
                 print('first run')
-                self.prev_tele_xyz = self.curr_tele_xyz
-                self.prev_tele_rpy = self.curr_tele_rpy
-                self.control_locked = False
+                self.prev_tele_xyz = curr_tele_xyz
+                self.prev_tele_rpy = curr_tele_rpy
                 self.first_run = False
                 return
             
-            if self.control_locked:
+            # Update Lock
+            self.kb.update()
+            if self.kb.lock_robot:
                 print('locked')
-                self.prev_tele_xyz = self.curr_tele_xyz
-                self.prev_tele_rpy = self.curr_tele_rpy
+                self.prev_tele_xyz = curr_tele_xyz
+                self.prev_tele_rpy = curr_tele_rpy
                 return
             
             # Gripper Control
             if open_gripper:
                 self.gripper_angle += self.gripper_delta
-                if self.gripper_angle > FOLLOWER_GRIPPER_JOINT_OPEN_MAX:
-                    self.gripper_angle = FOLLOWER_GRIPPER_JOINT_OPEN_MAX
+                if self.gripper_angle > FOLLOWER_GRIPPER_JOINT_OPEN:
+                    self.gripper_angle = FOLLOWER_GRIPPER_JOINT_OPEN
                 self.robot_gripper_command.cmd = self.gripper_angle
                 self.robot.gripper.core.pub_single.publish(self.robot_gripper_command)
             if close_gripper:
                 self.gripper_angle -= self.gripper_delta
-                if self.gripper_angle < FOLLOWER_GRIPPER_JOINT_CLOSE_MAX:
-                    self.gripper_angle = FOLLOWER_GRIPPER_JOINT_CLOSE_MAX
+                if self.gripper_angle < FOLLOWER_GRIPPER_JOINT_CLOSE:
+                    self.gripper_angle = FOLLOWER_GRIPPER_JOINT_CLOSE
                 self.robot_gripper_command.cmd = self.gripper_angle
                 self.robot.gripper.core.pub_single.publish(self.robot_gripper_command)
 
             # Calculate deltas
-            tele_xyz_delta = [curr - prev  for curr, prev in zip(self.curr_tele_xyz, self.prev_tele_xyz)]
-            tele_rpy_delta = [curr - prev  for curr, prev in zip(self.curr_tele_rpy, self.prev_tele_rpy)]
+            tele_xyz_delta = [curr - prev  for curr, prev in zip(curr_tele_xyz, self.prev_tele_xyz)]
+            tele_rpy_delta = [curr - prev  for curr, prev in zip(curr_tele_rpy, self.prev_tele_rpy)]
 
             if tele_xyz_delta == [0, 0, 0] and tele_rpy_delta == [0, 0, 0]:
-                self.prev_tele_xyz = self.curr_tele_xyz
-                self.prev_tele_rpy = self.curr_tele_rpy
+                self.prev_tele_xyz = curr_tele_xyz
+                self.prev_tele_rpy = curr_tele_rpy
                 return
             
             # X, Y, Z control
@@ -200,8 +201,8 @@ class TeleopRobot(InterbotixRobotNode):
             self.robot.arm.set_joint_positions(self.joint_angles, blocking=False)
 
             # Set the prev
-            self.prev_tele_xyz = self.curr_tele_xyz
-            self.prev_tele_rpy = self.curr_tele_rpy
+            self.prev_tele_xyz = curr_tele_xyz
+            self.prev_tele_rpy = curr_tele_rpy
 
         else:
             self.get_logger().info('Waiting for OmniState message...')
