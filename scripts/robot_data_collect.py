@@ -76,9 +76,11 @@ class RobotDataCollector(InterbotixRobotNode):
         self.create_subscription(OmniState, '/omni/state', self.tele_state_callback, 1)
 
         # Cameras Setup
-        self.field_image = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.overhead_image = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.wrist_image = np.zeros((480, 640, 3), dtype=np.uint8)
+        height = 240
+        width = 424
+        self.field_image = np.zeros((height, width, 3), dtype=np.uint8)
+        self.overhead_image = np.zeros((height, width, 3), dtype=np.uint8)
+        self.wrist_image = np.zeros((height, width, 3), dtype=np.uint8)
 
         callback_group = ReentrantCallbackGroup()
         self.create_subscription(
@@ -97,7 +99,7 @@ class RobotDataCollector(InterbotixRobotNode):
         )
         self.create_subscription(
             Image, 
-            '/cam_wrist/camera/color/image_raw', 
+            '/cam_wrist/camera/color/image_rect_raw', 
             self.wrist_image_callback, 
             1, 
             callback_group=callback_group
@@ -114,7 +116,7 @@ class RobotDataCollector(InterbotixRobotNode):
 
         # Recording Info
         DATA_DIR = "/home/qutrll/data/"
-        save_dir = "test_data/"
+        save_dir = "pot_pick_place/"
         self.save = True
         if self.save:
             self.save_dir = DATA_DIR + save_dir
@@ -152,8 +154,8 @@ class RobotDataCollector(InterbotixRobotNode):
 
                 # Save images
                 f.create_dataset('oh_images', data=np.array(self.im_oh))
-                f.create_dataset('wrist_images', data=np.array(self.im_field))
-                f.create_dataset('field_images', data=np.array(self.im_wrist))
+                f.create_dataset('field_images', data=np.array(self.im_field))
+                f.create_dataset('wrist_images', data=np.array(self.im_wrist))
 
                 # Create progress dataset
                 demo_length = len(self.data_dict['q_pos'])
@@ -239,7 +241,7 @@ class RobotDataCollector(InterbotixRobotNode):
         self.robot.core.robot_reboot_motors('single', 'gripper', True)
         self.robot.core.robot_set_operating_modes('group', 'arm', 'position')
         self.robot.core.robot_set_operating_modes('single', 'gripper', 'current_based_position')
-        self.robot.core.robot_set_motor_registers('single', 'gripper', 'current_limit', 300)
+        self.robot.core.robot_set_motor_registers('single', 'gripper', 'current_limit', 500)
         torque_on(self.robot)
         
         # move arm to starting position
@@ -286,24 +288,7 @@ class RobotDataCollector(InterbotixRobotNode):
         if DEBUG:
             self.display_images()
         
-        if (self.kb.record_state == SAVE) and (self.kb.prev_record_state == RECORDING):
-            # Save Data
-            self.save_data()
-            # Reset Robot Orientation
-            self.kb.prev_record_state = IDLE
-            self.reset_robot_orientation()
-        elif (self.kb.record_state == DISCARD) and (self.kb.prev_record_state == RECORDING):
-            print("Discarding Data")
-            # Discard Data
-            # Reset Robot Orientation
-            self.kb.prev_record_state = IDLE
-            self.reset_data()
-            self.reset_robot_orientation()
-
-        if self.kb.record_state == IDLE:
-            return
-
-        if (self.kb.record_state == CONTROL) or (self.kb.record_state == RECORDING):
+        if (self.kb.record_state == RECORDING) or (self.kb.record_state == CONTROL):
             if self.tele_state:
                 # Get the current teleoperate states. 
                 curr_tele_xyz = self.tele_state[0:3]
@@ -400,6 +385,23 @@ class RobotDataCollector(InterbotixRobotNode):
 
             else:
                 self.get_logger().info('Waiting for OmniState message...')
+        
+        elif (self.kb.record_state == SAVE) and (self.kb.prev_record_state == RECORDING):
+            # Save Data
+            self.save_data()
+            # Reset Robot Orientation
+            self.kb.prev_record_state = IDLE
+            self.reset_robot_orientation()
+        elif (self.kb.record_state == DISCARD) and (self.kb.prev_record_state == RECORDING):
+            print("Discarding Data")
+            # Discard Data
+            # Reset Robot Orientation
+            self.kb.prev_record_state = IDLE
+            self.reset_data()
+            self.reset_robot_orientation()
+
+        elif self.kb.record_state == IDLE:
+            return
 
 
 def main(args=None):

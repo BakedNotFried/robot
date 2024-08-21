@@ -8,8 +8,9 @@
       enable_infra1: false
       enable_infra2: false
       enable_rgbd: false
-      rgb_camera.color_profile: 640x480x60
+      rgb_camera.color_profile: 424x240x60
       rgb_camera.color_format: 'RGB8'
       align_depth.enable: false
       serial_no: "317222071463"
       camera.color.image_raw.enable_pub_plugins: ['image_transport/raw']
+# D435

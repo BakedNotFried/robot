@@ -16,27 +16,28 @@ class Cameras(InterbotixRobotNode):
             Image, 
             '/cam_field/camera/color/image_raw', 
             self.field_image_callback, 
-            10, 
+            1, 
             callback_group=callback_group
         )
         self.create_subscription(
             Image, 
             '/cam_overhead/camera/color/image_raw', 
             self.overhead_image_callback, 
-            10, 
+            1, 
             callback_group=callback_group
         )
         self.create_subscription(
             Image, 
-            '/cam_wrist/camera/color/image_raw', 
+            '/cam_wrist/camera/color/image_rect_raw', 
             self.wrist_image_callback, 
-            10, 
+            1, 
             callback_group=callback_group
         )
-        
-        self.field_image = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.overhead_image = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.wrist_image = np.zeros((480, 640, 3), dtype=np.uint8)
+        height = 240
+        width = 424
+        self.field_image = np.zeros((height, width, 3), dtype=np.uint8)
+        self.overhead_image = np.zeros((height, width, 3), dtype=np.uint8)
+        self.wrist_image = np.zeros((height, width, 3), dtype=np.uint8)
         
         hz = 60
         dt = 1/hz
