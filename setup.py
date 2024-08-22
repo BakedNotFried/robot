@@ -20,12 +20,12 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    author_email='tonyzhao@stanford.edu',
-    author='Tony Zhao',
-    maintainer='Trossen Robotics',
-    maintainer_email='trsupport@trossenrobotics.com',
-    description='ALOHA: A Low-cost Open-source Hardware System for Bimanual Teleoperation',
-    license='BSD',
+    author_email='cabennie96@gmail.com',
+    author='Callum Bennie',
+    maintainer='Callum Bennie',
+    maintainer_email='cabennie96@gmail.com',
+    description='Policy Introspection',
+    license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
