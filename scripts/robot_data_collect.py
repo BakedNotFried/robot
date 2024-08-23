@@ -101,7 +101,7 @@ class RobotDataCollector(InterbotixRobotNode):
 
         # Recording Info
         DATA_DIR = "/home/qutrll/data/"
-        save_dir = "test_data/"
+        save_dir = "pot_pick_place_60hz/"
         self.save = True
         if self.save:
             self.save_dir = DATA_DIR + save_dir
@@ -400,14 +400,7 @@ class RobotDataCollector(InterbotixRobotNode):
                 f.create_dataset('oh_images', data=np.array(self.im_oh))
                 f.create_dataset('field_images', data=np.array(self.im_field))
                 f.create_dataset('wrist_images', data=np.array(self.im_wrist))
-
-                # Create progress dataset
-                demo_length = len(self.data_dict['q_pos'])
-                progress = np.linspace(0, 1, demo_length, dtype=np.float32)
-                f.create_dataset('progress', data=progress)
-
             print(f"Data Saved to HDF5 file: {hdf5_path}")
-            print(f"Data of length: {demo_length}")
         else:
             print("Data Not Saved")
         

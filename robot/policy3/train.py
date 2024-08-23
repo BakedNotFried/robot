@@ -9,7 +9,6 @@ from dataloader import DataLoaderLite
 from logger import logger, log_train, log_val, log_best_model
 import config
 
-
 import pdb
 
 # Set random seed

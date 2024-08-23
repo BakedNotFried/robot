@@ -1,0 +1,20 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/qutrll/interbotix_ws/install/robot/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/realsense2_camera_msgs/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/omni_msgs/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/interbotix_xs_modules/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/interbotix_xs_msgs/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/interbotix_common_modules/lib/python3.12/site-packages",
+        "/opt/ros/rolling/lib/python3.12/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/qutrll/interbotix_ws/install/robot/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/realsense2_camera_msgs/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/omni_msgs/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/interbotix_xs_modules/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/interbotix_xs_msgs/lib/python3.12/site-packages",
+        "/home/qutrll/interbotix_ws/install/interbotix_common_modules/lib/python3.12/site-packages",
+        "/opt/ros/rolling/lib/python3.12/site-packages"
+    ]
+}
