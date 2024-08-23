@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.callback_groups import ReentrantCallbackGroup
+from message_filters import Subscriber, ApproximateTimeSynchronizer
 from sensor_msgs.msg import Image
 import os
 import time
@@ -8,6 +8,7 @@ import modern_robotics as mr
 import numpy as np
 import cv2
 import h5py
+from collections import deque
 
 from interbotix_common_modules.common_robot.robot import InterbotixRobotNode
 from interbotix_xs_modules.xs_robot.arm import InterbotixManipulatorXS
@@ -58,12 +59,13 @@ class RobotDataCollector(InterbotixRobotNode):
         self.kb = KeyboardInterface()
 
         # Fields
-        self.tele_state = None  # x, y, z, r, p, y, open_gripper, close_gripper
         self.gripper_delta = 0.05   # For altering gripper on update
         self.first_run = True
+        self.prev_tele_xyz = None
+        self.prev_tele_rpy = None
 
         # Scale Factor. For smoother control
-        self.xyz_scale = 2.5
+        self.xyz_scale = 6
 
         # Establish the initial joint angless
         self.arm_joint_angles = START_ARM_POSE[:6]
@@ -72,9 +74,6 @@ class RobotDataCollector(InterbotixRobotNode):
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
 
-        # Omni Teleoperation State Callback
-        self.create_subscription(OmniState, '/omni/state', self.tele_state_callback, 1)
-
         # Cameras Setup
         height = 240
         width = 424
@@ -82,41 +81,27 @@ class RobotDataCollector(InterbotixRobotNode):
         self.overhead_image = np.zeros((height, width, 3), dtype=np.uint8)
         self.wrist_image = np.zeros((height, width, 3), dtype=np.uint8)
 
-        callback_group = ReentrantCallbackGroup()
-        self.create_subscription(
-            Image, 
-            '/cam_overhead/camera/color/image_raw', 
-            self.overhead_image_callback, 
-            1, 
-            callback_group=callback_group
-        )
-        self.create_subscription(
-            Image, 
-            '/cam_field/camera/color/image_raw', 
-            self.field_image_callback, 
-            1, 
-            callback_group=callback_group
-        )
-        self.create_subscription(
-            Image, 
-            '/cam_wrist/camera/color/image_rect_raw', 
-            self.wrist_image_callback, 
-            1, 
-            callback_group=callback_group
-        )
+        # Set up subscribers for image topics
+        self.overhead_sub = Subscriber(self, Image, '/cam_overhead/camera/color/image_raw')
+        self.field_sub = Subscriber(self, Image, '/cam_field/camera/color/image_raw')
+        self.wrist_sub = Subscriber(self, Image, '/cam_wrist/camera/color/image_rect_raw')
 
-        # Control Rate
-        control_rate = 50.0
-        control_ts = 1.0/control_rate
+        # Set up subscriber for OmniState
+        # Control Callback based on Omni Teleoperation State. Check Omni State for publish rate - currently 60Hz
+        self.omni_sub = Subscriber(self, OmniState, '/omni/state')
 
-        # Sampling Rate
-        sample_rate = 10.0  # Hz
-        self.sample_tick = control_rate / sample_rate
-        self.sample_count = 0
+        # Set up ApproximateTimeSynchronizer
+        self.ts = ApproximateTimeSynchronizer(
+            [self.overhead_sub, self.field_sub, self.wrist_sub, self.omni_sub],
+            queue_size=3,
+            slop=0.015,
+            allow_headerless=False
+        )
+        self.ts.registerCallback(self.synchronized_callback)
 
         # Recording Info
         DATA_DIR = "/home/qutrll/data/"
-        save_dir = "pot_pick_place/"
+        save_dir = "test_data/"
         self.save = True
         if self.save:
             self.save_dir = DATA_DIR + save_dir
@@ -132,9 +117,268 @@ class RobotDataCollector(InterbotixRobotNode):
         self.im_field = []
         self.im_wrist = []
 
-        # Control Loop Timer
-        self.teleop_control_timer = self.create_timer(control_ts, self.teleop_control)
+        # # Diagnostics
+        # # Diagnostic counters
+        # self.total_callbacks = 0
+        # self.successful_syncs = 0
+        # self.dropped_overhead = 0
+        # self.dropped_field = 0
+        # self.dropped_wrist = 0
+        # self.dropped_omni = 0
 
+        # # Set up individual callbacks for diagnostic purposes
+        # self.create_subscription(Image, '/cam_overhead/camera/color/image_raw', self.overhead_callback, 1)
+        # self.create_subscription(Image, '/cam_field/camera/color/image_raw', self.field_callback, 1)
+        # self.create_subscription(Image, '/cam_wrist/camera/color/image_rect_raw', self.wrist_callback, 1)
+        # self.create_subscription(OmniState, '/omni/state', self.omni_callback, 1)
+
+        # # Set up timer for periodic diagnostics
+        # self.create_timer(10.0, self.print_diagnostics)  # Print diagnostics every 10 seconds
+
+        # # Control Timing
+        # self.last_callback_time = time.time()
+        # self.callback_intervals = deque(maxlen=100)  # Store last 100 intervals
+        # self.control_durations = deque(maxlen=100)  # Store last 100 control operation durations
+
+
+    def synchronized_callback(self, overhead_msg, field_msg, wrist_msg, omni_msg):
+        # # Diagnostics
+        # self.total_callbacks += 1
+        # self.successful_syncs += 1
+        
+        # # Decrement the individual counters as these messages were successfully synced
+        # self.dropped_overhead -= 1
+        # self.dropped_field -= 1
+        # self.dropped_wrist -= 1
+        # self.dropped_omni -= 1
+
+        # Process images
+        self.overhead_image = self.process_image(overhead_msg)
+        self.field_image = self.process_image(field_msg)
+        self.wrist_image = self.process_image(wrist_msg)
+
+        # Process OmniState
+        self.robot_control_callback(omni_msg)
+
+        if DEBUG:
+            self.display_images()
+
+
+    def robot_startup(self):
+        """Move robot arm to start demonstration pose"""
+        # reboot gripper motors, and set operating modes for all motors
+        self.robot.core.robot_reboot_motors('single', 'gripper', True)
+        self.robot.core.robot_set_operating_modes('group', 'arm', 'position')
+        self.robot.core.robot_set_operating_modes('single', 'gripper', 'current_based_position')
+        self.robot.core.robot_set_motor_registers('single', 'gripper', 'current_limit', 500)
+        torque_on(self.robot)
+        
+        # move arm to starting position
+        start_arm_qpos = START_ARM_POSE[:6]
+        move_arms(
+            [self.robot],
+            [start_arm_qpos],
+            moving_time=1.5,
+        )
+
+
+    def robot_control_callback(self, msg):
+            # # Control Timing
+            # current_time = time.time()
+            # self.callback_intervals.append(current_time - self.last_callback_time)
+            # self.last_callback_time = current_time
+            # control_start_time = time.time()
+        
+            tele_state = [msg.pose.position.y,
+                            -msg.pose.position.x,
+                            msg.pose.position.z,
+                            -msg.rpy.z,
+                            -msg.rpy.y,
+                            -msg.rpy.x,
+                            msg.open_gripper.data,
+                            msg.close_gripper.data]
+            
+            # Update Keyboard Interface every tick
+            self.kb.prev_record_state = self.kb.record_state
+            self.kb.update()
+
+            if (self.kb.record_state == RECORDING) or (self.kb.record_state == CONTROL):
+                # Get the current teleoperate states. 
+                curr_tele_xyz = tele_state[0:3]
+                curr_tele_xyz = [self.xyz_scale * e for e in curr_tele_xyz]
+                curr_tele_rpy = tele_state[3:6]
+                open_gripper = tele_state[7]
+                close_gripper = tele_state[6]
+
+                # On the first run, set the previous states and do nothing
+                if self.first_run:
+                    print('first run')
+                    self.prev_tele_xyz = curr_tele_xyz
+                    self.prev_tele_rpy = curr_tele_rpy
+                    self.first_run = False
+
+                    # # Control Timing
+                    # control_end_time = time.time()
+                    # self.control_durations.append(control_end_time - control_start_time)
+                    # if len(self.callback_intervals) == 100:
+                    #     avg_interval = sum(self.callback_intervals) / len(self.callback_intervals)
+                    #     avg_duration = sum(self.control_durations) / len(self.control_durations)
+                    #     self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
+                    #     self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
+
+                    return
+                
+                # Check Lock. Updated via KeyboardInterface
+                if self.kb.lock_robot:
+                    self.prev_tele_xyz = curr_tele_xyz
+                    self.prev_tele_rpy = curr_tele_rpy
+
+                    # Record Data
+                    if self.kb.record_state == RECORDING:
+                        self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
+                        self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
+                        self.im_oh.append(self.overhead_image.copy())
+                        self.im_field.append(self.field_image.copy())
+                        self.im_wrist.append(self.wrist_image.copy())
+
+                    # # Control Timing
+                    # control_end_time = time.time()
+                    # self.control_durations.append(control_end_time - control_start_time)
+                    # if len(self.callback_intervals) == 100:
+                    #     avg_interval = sum(self.callback_intervals) / len(self.callback_intervals)
+                    #     avg_duration = sum(self.control_durations) / len(self.control_durations)
+                    #     self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
+                    #     self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
+
+                    return
+                
+                # Gripper Control
+                if open_gripper:
+                    self.gripper_joint += self.gripper_delta
+                    if self.gripper_joint > ROBOT_GRIPPER_JOINT_OPEN:
+                        self.gripper_joint = ROBOT_GRIPPER_JOINT_OPEN
+                    self.robot_gripper_cmd.cmd = self.gripper_joint
+                    self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+                if close_gripper:
+                    self.gripper_joint -= self.gripper_delta
+                    if self.gripper_joint < ROBOT_GRIPPER_JOINT_CLOSE_MAX:
+                        self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
+                    self.robot_gripper_cmd.cmd = self.gripper_joint
+                    self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+
+                # Calculate deltas
+                tele_xyz_delta = [curr - prev  for curr, prev in zip(curr_tele_xyz, self.prev_tele_xyz)]
+                tele_rpy_delta = [curr - prev  for curr, prev in zip(curr_tele_rpy, self.prev_tele_rpy)]
+
+                if tele_xyz_delta == [0, 0, 0] and tele_rpy_delta == [0, 0, 0]:
+                    self.prev_tele_xyz = curr_tele_xyz
+                    self.prev_tele_rpy = curr_tele_rpy
+
+                    # Record Data
+                    if self.kb.record_state == RECORDING:
+                        self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
+                        self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
+                        self.im_oh.append(self.overhead_image.copy())
+                        self.im_field.append(self.field_image.copy())
+                        self.im_wrist.append(self.wrist_image.copy())
+
+                    # # Control Timing
+                    # control_end_time = time.time()
+                    # self.control_durations.append(control_end_time - control_start_time)
+                    # if len(self.callback_intervals) == 100:
+                    #     avg_interval = sum(self.callback_intervals) / len(self.callback_intervals)
+                    #     avg_duration = sum(self.control_durations) / len(self.control_durations)
+                    #     self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
+                    #     self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
+
+                    return
+                
+                # X, Y, Z control
+                if not (tele_xyz_delta == [0, 0, 0]):
+                    current_ee_pose = self.FKin(self.arm_joint_angles)
+                    xyz_transform = tr.RpToTrans(tr.eulerAnglesToRotationMatrix([0, 0, 0]), tele_xyz_delta)
+                    move_xyz = xyz_transform.dot(current_ee_pose)
+                    # move_xyz = np.dot(current_ee_pose, xyz_transform)
+                    self.arm_joint_angles, _ = self.IKin(move_xyz, custom_guess=self.arm_joint_angles)
+
+                # Roll, Pitch and Yaw control
+                if not (tele_rpy_delta == [0, 0, 0]):
+                    joint_angle_delta = [0, 0, 0, tele_rpy_delta[2], tele_rpy_delta[1], tele_rpy_delta[0]]
+                    self.arm_joint_angles = [a + b for a, b in zip(self.arm_joint_angles, joint_angle_delta)]
+
+                # Robot State Update
+                self.robot.arm.set_joint_positions(self.arm_joint_angles, blocking=False)
+
+                # Record Data
+                if self.kb.record_state == RECORDING:
+                    self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
+                    self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
+                    self.im_oh.append(self.overhead_image.copy())
+                    self.im_field.append(self.field_image.copy())
+                    self.im_wrist.append(self.wrist_image.copy())
+
+                # # Control Timing
+                # control_end_time = time.time()
+                # self.control_durations.append(control_end_time - control_start_time)
+                # if len(self.callback_intervals) == 100:
+                #     avg_interval = sum(self.callback_intervals) / len(self.callback_intervals)
+                #     avg_duration = sum(self.control_durations) / len(self.control_durations)
+                #     self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
+                #     self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
+
+                # Set the prev
+                self.prev_tele_xyz = curr_tele_xyz
+                self.prev_tele_rpy = curr_tele_rpy
+
+            elif (self.kb.record_state == SAVE) and (self.kb.prev_record_state == RECORDING):
+                # Save Data
+                self.save_data()
+                # Reset Robot Orientation
+                self.kb.prev_record_state = IDLE
+                self.reset_robot_orientation()
+            elif (self.kb.record_state == DISCARD) and (self.kb.prev_record_state == RECORDING):
+                print("Discarding Data")
+                # Discard Data
+                self.reset_data()
+                # Reset Robot Orientation
+                self.kb.prev_record_state = IDLE
+                self.reset_robot_orientation()
+            elif self.kb.record_state == IDLE:
+                return
+        
+
+    # Diagnostic Methods
+    def overhead_callback(self, msg):
+        self.dropped_overhead += 1
+
+    def field_callback(self, msg):
+        self.dropped_field += 1
+
+    def wrist_callback(self, msg):
+        self.dropped_wrist += 1
+
+    def omni_callback(self, msg):
+        self.dropped_omni += 1
+
+    def print_diagnostics(self):
+        total_messages = self.total_callbacks * 4  # 4 topics
+        if total_messages > 0:
+            sync_rate = (self.successful_syncs * 4 / total_messages) * 100
+        else:
+            sync_rate = 0
+
+        self.get_logger().info(f"""
+        Diagnostics:
+        Total callbacks: {self.total_callbacks}
+        Successful syncs: {self.successful_syncs}
+        Sync rate: {sync_rate:.2f}%
+        Dropped messages:
+            Overhead: {self.dropped_overhead}
+            Field: {self.dropped_field}
+            Wrist: {self.dropped_wrist}
+            OmniState: {self.dropped_omni}
+        """)
+    # End of Diagnostic Methods
 
     def save_data(self):
         if self.save:
@@ -188,15 +432,6 @@ class RobotDataCollector(InterbotixRobotNode):
         cv2.imshow('Camera Images', combined_image)
         cv2.waitKey(1)
 
-    def overhead_image_callback(self, msg):
-        self.overhead_image = self.process_image(msg)
-
-    def field_image_callback(self, msg):
-        self.field_image = self.process_image(msg)
-        
-    def wrist_image_callback(self, msg):
-        self.wrist_image = self.process_image(msg)
-
 
     def FKin(self, joint_positions):
         # Returns SE(3) Pose Matrix
@@ -233,24 +468,6 @@ class RobotDataCollector(InterbotixRobotNode):
 
         print("No valid pose could be found")
         return theta_list, False
-    
-
-    def robot_startup(self):
-        """Move robot arm to start demonstration pose"""
-        # reboot gripper motors, and set operating modes for all motors
-        self.robot.core.robot_reboot_motors('single', 'gripper', True)
-        self.robot.core.robot_set_operating_modes('group', 'arm', 'position')
-        self.robot.core.robot_set_operating_modes('single', 'gripper', 'current_based_position')
-        self.robot.core.robot_set_motor_registers('single', 'gripper', 'current_limit', 500)
-        torque_on(self.robot)
-        
-        # move arm to starting position
-        start_arm_qpos = START_ARM_POSE[:6]
-        move_arms(
-            [self.robot],
-            [start_arm_qpos],
-            moving_time=1.5,
-        )
 
 
     def reset_robot_orientation(self):
@@ -268,140 +485,6 @@ class RobotDataCollector(InterbotixRobotNode):
         self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-        
-    def tele_state_callback(self, msg):
-        self.tele_state = [msg.pose.position.y,
-                           -msg.pose.position.x,
-                           msg.pose.position.z,
-                           -msg.rpy.z,
-                           -msg.rpy.y,
-                           -msg.rpy.x,
-                           msg.open_gripper.data,
-                           msg.close_gripper.data]
-
-
-    def teleop_control(self):
-        # Update Keyboard Interface every tick
-        self.kb.prev_record_state = self.kb.record_state
-        self.kb.update()
-
-        if DEBUG:
-            self.display_images()
-        
-        if (self.kb.record_state == RECORDING) or (self.kb.record_state == CONTROL):
-            if self.tele_state:
-                # Get the current teleoperate states. 
-                curr_tele_xyz = self.tele_state[0:3]
-                curr_tele_xyz = [self.xyz_scale * e for e in curr_tele_xyz]
-                curr_tele_rpy = self.tele_state[3:6]
-                open_gripper = self.tele_state[6]
-                close_gripper = self.tele_state[7]
-
-                # On the first run, set the previous states and do nothing
-                if self.first_run:
-                    print('first run')
-                    self.prev_tele_xyz = curr_tele_xyz
-                    self.prev_tele_rpy = curr_tele_rpy
-                    self.first_run = False
-                    return
-                
-                # Check Lock. Updated via KeyboardInterface
-                if self.kb.lock_robot:
-                    self.prev_tele_xyz = curr_tele_xyz
-                    self.prev_tele_rpy = curr_tele_rpy
-
-                    # Record Data
-                    if (self.sample_count % self.sample_tick) == 0 and self.kb.record_state == RECORDING:
-                        self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
-                        self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
-                        self.im_oh.append(self.overhead_image.copy())
-                        self.im_field.append(self.field_image.copy())
-                        self.im_wrist.append(self.wrist_image.copy())
-                    self.sample_count += 1
-
-                    return
-                
-                # Gripper Control
-                if open_gripper:
-                    self.gripper_joint += self.gripper_delta
-                    if self.gripper_joint > ROBOT_GRIPPER_JOINT_OPEN:
-                        self.gripper_joint = ROBOT_GRIPPER_JOINT_OPEN
-                    self.robot_gripper_cmd.cmd = self.gripper_joint
-                    self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-                if close_gripper:
-                    self.gripper_joint -= self.gripper_delta
-                    if self.gripper_joint < ROBOT_GRIPPER_JOINT_CLOSE_MAX:
-                        self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
-                    self.robot_gripper_cmd.cmd = self.gripper_joint
-                    self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-
-                # Calculate deltas
-                tele_xyz_delta = [curr - prev  for curr, prev in zip(curr_tele_xyz, self.prev_tele_xyz)]
-                tele_rpy_delta = [curr - prev  for curr, prev in zip(curr_tele_rpy, self.prev_tele_rpy)]
-
-                if tele_xyz_delta == [0, 0, 0] and tele_rpy_delta == [0, 0, 0]:
-                    self.prev_tele_xyz = curr_tele_xyz
-                    self.prev_tele_rpy = curr_tele_rpy
-
-                    # Record Data
-                    if (self.sample_count % self.sample_tick) == 0 and self.kb.record_state == RECORDING:
-                        self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
-                        self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
-                        self.im_oh.append(self.overhead_image.copy())
-                        self.im_field.append(self.field_image.copy())
-                        self.im_wrist.append(self.wrist_image.copy())
-                    self.sample_count += 1
-
-                    return
-                
-                # X, Y, Z control
-                if not (tele_xyz_delta == [0, 0, 0]):
-                    current_ee_pose = self.FKin(self.arm_joint_angles)
-                    xyz_transform = tr.RpToTrans(tr.eulerAnglesToRotationMatrix([0, 0, 0]), tele_xyz_delta)
-                    move_xyz = xyz_transform.dot(current_ee_pose)
-                    # move_xyz = np.dot(current_ee_pose, xyz_transform)
-                    self.arm_joint_angles, _ = self.IKin(move_xyz, custom_guess=self.arm_joint_angles)
-
-                # Roll, Pitch and Yaw control
-                if not (tele_rpy_delta == [0, 0, 0]):
-                    joint_angle_delta = [0, 0, 0, tele_rpy_delta[2], tele_rpy_delta[1], tele_rpy_delta[0]]
-                    self.arm_joint_angles = [a + b for a, b in zip(self.arm_joint_angles, joint_angle_delta)]
-
-                # Robot State Update
-                self.robot.arm.set_joint_positions(self.arm_joint_angles, blocking=False)
-
-                # Set the prev
-                self.prev_tele_xyz = curr_tele_xyz
-                self.prev_tele_rpy = curr_tele_rpy
-
-                # Record Data
-                if (self.sample_count % self.sample_tick) == 0 and self.kb.record_state == RECORDING:
-                    self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
-                    self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
-                    self.im_oh.append(self.overhead_image.copy())
-                    self.im_field.append(self.field_image.copy())
-                    self.im_wrist.append(self.wrist_image.copy())
-                self.sample_count += 1
-
-            else:
-                self.get_logger().info('Waiting for OmniState message...')
-        
-        elif (self.kb.record_state == SAVE) and (self.kb.prev_record_state == RECORDING):
-            # Save Data
-            self.save_data()
-            # Reset Robot Orientation
-            self.kb.prev_record_state = IDLE
-            self.reset_robot_orientation()
-        elif (self.kb.record_state == DISCARD) and (self.kb.prev_record_state == RECORDING):
-            print("Discarding Data")
-            # Discard Data
-            # Reset Robot Orientation
-            self.kb.prev_record_state = IDLE
-            self.reset_data()
-            self.reset_robot_orientation()
-
-        elif self.kb.record_state == IDLE:
-            return
 
 
 def main(args=None):

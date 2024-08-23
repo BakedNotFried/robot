@@ -11,6 +11,7 @@ KEY_START_RECORDING = pygame.K_w
 KEY_SAVE_RECORDING = pygame.K_e
 KEY_DISCARD_RECORDING = pygame.K_r
 KEY_IDLE = pygame.K_t
+KEY_SLEEP = pygame.K_p
 
 KEY_LOCK_ROBOT = pygame.K_a
 KEY_UNLOCK_ROBOT = pygame.K_s

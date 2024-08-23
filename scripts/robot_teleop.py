@@ -18,11 +18,15 @@ from robot.constants import (
     ROBOT_GRIPPER_JOINT_CLOSE_MAX,
     ROBOT_GRIPPER_JOINT_MID,
     START_ARM_POSE,
+    SLEEP_ARM_POSE
 )
 from robot.robot_utils import (
     move_arms,
     torque_on,
 )
+
+import time
+from collections import deque
 
 class RobotTeleop(InterbotixRobotNode):
     def __init__(self):
@@ -44,12 +48,13 @@ class RobotTeleop(InterbotixRobotNode):
         self.kb = KeyboardInterface()
 
         # Fields
-        self.tele_state = None  # x, y, z, r, p, y, open_gripper, close_gripper
         self.gripper_delta = 0.05   # For altering gripper on update
         self.first_run = True
+        self.prev_tele_xyz = None
+        self.prev_tele_rpy = None
 
         # Scale Factor. For smoother control
-        self.xyz_scale = 2.5
+        self.xyz_scale = 5
 
         # Establish the initial joint angless
         self.arm_joint_angles = START_ARM_POSE[:6]
@@ -58,13 +63,12 @@ class RobotTeleop(InterbotixRobotNode):
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
 
-        # Omni Teleoperation State Callback
-        self.create_subscription(OmniState, '/omni/state', self.tele_state_callback, 1)
-        
-        # Control Loop Timer
-        hz = 50
-        dt = 1/hz
-        self.teleop_control_timer = self.create_timer(dt, self.teleop_control)
+        # Control Callback based on Omni Teleoperation State. Check Omni State for publish rate - currently 60Hz
+        self.create_subscription(OmniState, '/omni/state', self.robot_control_callback, 1)
+
+        self.last_callback_time = time.time()
+        self.callback_intervals = deque(maxlen=100)  # Store last 100 intervals
+        self.control_durations = deque(maxlen=100)  # Store last 100 control operation durations
         
 
     def FKin(self, joint_positions):
@@ -121,91 +125,128 @@ class RobotTeleop(InterbotixRobotNode):
             moving_time=1.5,
         )
 
-
-    def tele_state_callback(self, msg):
-        self.tele_state = [msg.pose.position.y,
-                           -msg.pose.position.x,
-                           msg.pose.position.z,
-                           -msg.rpy.z,
-                           -msg.rpy.y,
-                           -msg.rpy.x,
-                           msg.open_gripper.data,
-                           msg.close_gripper.data]
+    def robot_sleep(self):
+        # move arm to sleep pose
+        start_arm_qpos = SLEEP_ARM_POSE[:6]
+        move_arms(
+            [self.robot],
+            [start_arm_qpos],
+            moving_time=2,
+        )
 
 
-    def teleop_control(self):
-        if self.tele_state:
-            # self.start = time.time()
-            # Get the current teleoperate states. 
-            curr_tele_xyz = self.tele_state[0:3]
-            curr_tele_xyz = [self.xyz_scale * e for e in curr_tele_xyz]
-            curr_tele_rpy = self.tele_state[3:6]
-            open_gripper = self.tele_state[6]
-            close_gripper = self.tele_state[7]
+    def robot_control_callback(self, msg):
+        current_time = time.time()
+        self.callback_intervals.append(current_time - self.last_callback_time)
+        self.last_callback_time = current_time
+        control_start_time = time.time()
 
-            # On the first run, set the previous states and do nothing
-            if self.first_run:
-                print('first run')
-                self.prev_tele_xyz = curr_tele_xyz
-                self.prev_tele_rpy = curr_tele_rpy
-                self.first_run = False
-                return
-            
-            # Update Lock/Unlock of the arm via keyboard interface
-            self.kb.update()
-            if self.kb.lock_robot:
-                print('locked')
-                self.prev_tele_xyz = curr_tele_xyz
-                self.prev_tele_rpy = curr_tele_rpy
-                return
-            
-            # Gripper Control
-            if open_gripper:
-                self.gripper_joint += self.gripper_delta
-                if self.gripper_joint > ROBOT_GRIPPER_JOINT_OPEN:
-                    self.gripper_joint = ROBOT_GRIPPER_JOINT_OPEN
-                self.robot_gripper_cmd.cmd = self.gripper_joint
-                self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-            if close_gripper:
-                self.gripper_joint -= self.gripper_delta
-                if self.gripper_joint < ROBOT_GRIPPER_JOINT_CLOSE_MAX:
-                    self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
-                self.robot_gripper_cmd.cmd = self.gripper_joint
-                self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+        # Omni Teleop State
+        tele_state = [msg.pose.position.y,
+                        -msg.pose.position.x,
+                        msg.pose.position.z,
+                        -msg.rpy.z,
+                        -msg.rpy.y,
+                        -msg.rpy.x,
+                        msg.open_gripper.data,
+                        msg.close_gripper.data]
+        
+        # Get the current teleoperate states. 
+        curr_tele_xyz = tele_state[0:3]
+        curr_tele_xyz = [self.xyz_scale * e for e in curr_tele_xyz]
+        curr_tele_rpy = tele_state[3:6]
+        close_gripper = tele_state[6]
+        open_gripper = tele_state[7]
 
-            # Calculate deltas
-            tele_xyz_delta = [curr - prev  for curr, prev in zip(curr_tele_xyz, self.prev_tele_xyz)]
-            tele_rpy_delta = [curr - prev  for curr, prev in zip(curr_tele_rpy, self.prev_tele_rpy)]
+        # On the first run, set the previous states and do nothing
+        if self.first_run:
+            print('first run')
+            self.prev_tele_xyz = curr_tele_xyz
+            self.prev_tele_rpy = curr_tele_rpy
+            self.first_run = False
 
-            if tele_xyz_delta == [0, 0, 0] and tele_rpy_delta == [0, 0, 0]:
-                self.prev_tele_xyz = curr_tele_xyz
-                self.prev_tele_rpy = curr_tele_rpy
-                return
-            
-            # X, Y, Z control
-            if not (tele_xyz_delta == [0, 0, 0]):
-                current_ee_pose = self.FKin(self.arm_joint_angles)
-                xyz_transform = tr.RpToTrans(tr.eulerAnglesToRotationMatrix([0, 0, 0]), tele_xyz_delta)
-                move_xyz = xyz_transform.dot(current_ee_pose)
-                # move_xyz = np.dot(current_ee_pose, xyz_transform)
-                self.arm_joint_angles, _ = self.IKin(move_xyz, custom_guess=self.arm_joint_angles)
-
-            # Roll, Pitch and Yaw control
-            if not (tele_rpy_delta == [0, 0, 0]):
-                joint_angle_delta = [0, 0, 0, tele_rpy_delta[2], tele_rpy_delta[1], tele_rpy_delta[0]]
-                self.arm_joint_angles = [a + b for a, b in zip(self.arm_joint_angles, joint_angle_delta)]
-
-            # self.end = time.time()
-            # print(1/(self.end-self.start))
-            # Robot State Update
-            self.robot.arm.set_joint_positions(self.arm_joint_angles, blocking=False)
-
-            # Set the prev
+            control_end_time = time.time()
+            self.control_durations.append(control_end_time - control_start_time)
+            if len(self.callback_intervals) == 100:
+                avg_interval = sum(self.callback_intervals) / len(self.callback_intervals)
+                avg_duration = sum(self.control_durations) / len(self.control_durations)
+                self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
+                self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
+        
+        # Update Lock/Unlock of the arm via keyboard interface
+        self.kb.update()
+        if self.kb.lock_robot:
+            print('locked')
             self.prev_tele_xyz = curr_tele_xyz
             self.prev_tele_rpy = curr_tele_rpy
 
-        else:
-            self.get_logger().info('Waiting for OmniState message...')
+            control_end_time = time.time()
+            self.control_durations.append(control_end_time - control_start_time)
+            if len(self.callback_intervals) == 100:
+                avg_interval = sum(self.callback_intervals) / len(self.callback_intervals)
+                avg_duration = sum(self.control_durations) / len(self.control_durations)
+                self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
+                self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
+        
+        # Gripper Control
+        if open_gripper:
+            self.gripper_joint += self.gripper_delta
+            if self.gripper_joint > ROBOT_GRIPPER_JOINT_OPEN:
+                self.gripper_joint = ROBOT_GRIPPER_JOINT_OPEN
+            self.robot_gripper_cmd.cmd = self.gripper_joint
+            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+        if close_gripper:
+            self.gripper_joint -= self.gripper_delta
+            if self.gripper_joint < ROBOT_GRIPPER_JOINT_CLOSE_MAX:
+                self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
+            self.robot_gripper_cmd.cmd = self.gripper_joint
+            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+
+        # Calculate deltas
+        tele_xyz_delta = [curr - prev  for curr, prev in zip(curr_tele_xyz, self.prev_tele_xyz)]
+        tele_rpy_delta = [curr - prev  for curr, prev in zip(curr_tele_rpy, self.prev_tele_rpy)]
+
+        if tele_xyz_delta == [0, 0, 0] and tele_rpy_delta == [0, 0, 0]:
+            self.prev_tele_xyz = curr_tele_xyz
+            self.prev_tele_rpy = curr_tele_rpy
+
+            control_end_time = time.time()
+            self.control_durations.append(control_end_time - control_start_time)
+            if len(self.callback_intervals) == 100:
+                avg_interval = sum(self.callback_intervals) / len(self.callback_intervals)
+                avg_duration = sum(self.control_durations) / len(self.control_durations)
+                self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
+                self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
+            
+            return
+        
+        # X, Y, Z control
+        if not (tele_xyz_delta == [0, 0, 0]):
+            current_ee_pose = self.FKin(self.arm_joint_angles)
+            xyz_transform = tr.RpToTrans(tr.eulerAnglesToRotationMatrix([0, 0, 0]), tele_xyz_delta)
+            move_xyz = xyz_transform.dot(current_ee_pose)
+            # move_xyz = np.dot(current_ee_pose, xyz_transform)
+            self.arm_joint_angles, _ = self.IKin(move_xyz, custom_guess=self.arm_joint_angles)
+
+        # Roll, Pitch and Yaw control
+        if not (tele_rpy_delta == [0, 0, 0]):
+            joint_angle_delta = [0, 0, 0, tele_rpy_delta[2], tele_rpy_delta[1], tele_rpy_delta[0]]
+            self.arm_joint_angles = [a + b for a, b in zip(self.arm_joint_angles, joint_angle_delta)]
+
+        # Robot State Update
+        self.robot.arm.set_joint_positions(self.arm_joint_angles, blocking=False)
+
+        # Set the prev
+        self.prev_tele_xyz = curr_tele_xyz
+        self.prev_tele_rpy = curr_tele_rpy
+
+        control_end_time = time.time()
+        self.control_durations.append(control_end_time - control_start_time)
+        if len(self.callback_intervals) == 100:
+            avg_interval = sum(self.callback_intervals) / len(self.callback_intervals)
+            avg_duration = sum(self.control_durations) / len(self.control_durations)
+            self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
+            self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
 
 
 def main(args=None):

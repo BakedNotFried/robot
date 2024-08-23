@@ -1,4 +1,18 @@
-omni_name: phantom
-publish_rate: 100
-reference_frame: /map
-units: m
+port: /dev/ttyDXL
+
+groups:
+  arm:
+    operating_mode: position
+    profile_type: velocity
+    profile_velocity: 0
+    profile_acceleration: 0
+    torque_enable: true
+
+singles:
+  gripper:
+    operating_mode: linear_position
+    profile_type: velocity
+    profile_velocity: 0
+    profile_acceleration: 0
+    torque_enable: true
+

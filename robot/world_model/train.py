@@ -114,7 +114,7 @@ for step in range(start_step, config.max_steps):
                 target = next_images.to(device)
 
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                    output = model(images, q_pos, progress)
+                    output = model(images, actions, q_pos, progress)
                     loss = loss_fn(output, target)
                 
                 val_loss += loss.item()
