@@ -103,7 +103,7 @@ class RobotDataCollector(InterbotixRobotNode):
 
         # Recording Info
         DATA_DIR = "/home/qutrll/data/"
-        save_dir = "pot_pick_place_60hz/"
+        save_dir = "pot_pick_place_2_60hz/"
         self.save = True
         if self.save:
             self.save_dir = DATA_DIR + save_dir

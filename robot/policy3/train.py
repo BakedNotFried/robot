@@ -87,12 +87,11 @@ for step in range(start_step, config.max_steps):
     actions = actions.to(device)
     q_pos = q_pos.to(device)
     images = images.to(device)
-    progress = progress.to(device)
     next_progress = next_progress.to(device)
     target = torch.cat([actions, next_progress], dim=1)
 
     with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-        output = model(images, q_pos, progress)
+        output = model(images, q_pos)
         loss = loss_fn(output, target)
 
     loss.backward()
@@ -110,12 +109,11 @@ for step in range(start_step, config.max_steps):
                 actions = actions.to(device)
                 q_pos = q_pos.to(device)
                 images = images.to(device)
-                progress = progress.to(device)
                 next_progress = next_progress.to(device)
                 target = torch.cat([actions, next_progress], dim=1)
                 
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                    output = model(images, q_pos, progress)
+                    output = model(images, q_pos)
                     loss = loss_fn(output, target)
                 
                 val_loss += loss.item()

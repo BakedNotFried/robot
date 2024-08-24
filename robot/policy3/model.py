@@ -14,7 +14,7 @@ class PolicyCNNMLP(nn.Module):
         
         # Define the MLP
         self.mlp = nn.Sequential(
-            nn.Linear(776, 512),
+            nn.Linear(775, 512),
             # nn.Linear(2312, 512),
             nn.ReLU(),
             nn.Dropout(0.2),
@@ -27,16 +27,16 @@ class PolicyCNNMLP(nn.Module):
             nn.Linear(128, 8),
         )
 
-    def forward(self, images, q_pos, progress):
+    def forward(self, images, q_pos):
 
-        # Encode the images and combine with q_pos and progress
+        # Encode the images and combine with q_pos
         batch_size, num_images, channels, height, width = images.shape
         reshaped_images = images.view(batch_size * num_images, channels, height, width)
         encoded_features = self.encoder(reshaped_images).squeeze()
         feature_size = encoded_features.shape[-1]
         encoded_features = encoded_features.view(batch_size, num_images * feature_size)
 
-        combined_features = torch.cat([encoded_features, q_pos, progress], dim=1)
+        combined_features = torch.cat([encoded_features, q_pos], dim=1)
 
         # Pass combined features through the MLP
         output = self.mlp(combined_features)
