@@ -14,7 +14,8 @@ class PolicyCNNMLP(nn.Module):
         
         # Define the MLP
         self.mlp = nn.Sequential(
-            nn.Linear(2312, 512),
+            nn.Linear(776, 512),
+            # nn.Linear(2312, 512),
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(512, 512),

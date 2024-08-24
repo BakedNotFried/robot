@@ -59,7 +59,7 @@ class RobotTeleop(InterbotixRobotNode):
         use_compile = True
         if use_compile:
             self.policy = torch.compile(self.policy)
-        checkpoint_path = '/home/qutrll/data/pot_pick_place_ckpt/1/checkpoint_step_90000_seed_1337.ckpt'
+        checkpoint_path = '/home/qutrll/data/pot_pick_place_ckpt_10hz/1/checkpoint_step_1000000_seed_1337.ckpt'
         checkpoint = torch.load(checkpoint_path)
         self.policy.load_state_dict(checkpoint['model_state_dict'])
 
@@ -70,28 +70,24 @@ class RobotTeleop(InterbotixRobotNode):
         self.field_image = np.zeros((height, width, 3), dtype=np.uint8)
         self.wrist_image = np.zeros((height, width, 3), dtype=np.uint8)
 
-        callback_group = ReentrantCallbackGroup()
-        self.create_subscription(
-            Image, 
-            '/cam_overhead/camera/color/image_raw', 
-            self.overhead_image_callback, 
-            1, 
-            callback_group=callback_group
-        )
+        # self.create_subscription(
+        #     Image, 
+        #     '/cam_overhead/camera/color/image_raw', 
+        #     self.overhead_image_callback, 
+        #     1, 
+        # )
         self.create_subscription(
             Image, 
             '/cam_field/camera/color/image_raw', 
             self.field_image_callback, 
             1, 
-            callback_group=callback_group
         )
-        self.create_subscription(
-            Image, 
-            '/cam_wrist/camera/color/image_rect_raw', 
-            self.wrist_image_callback, 
-            1, 
-            callback_group=callback_group
-        )
+        # self.create_subscription(
+        #     Image, 
+        #     '/cam_wrist/camera/color/image_rect_raw', 
+        #     self.wrist_image_callback, 
+        #     1, 
+        # )
 
         # Establish the initial joint angles
         self.arm_joint_angles = START_ARM_POSE[:6]
@@ -104,7 +100,7 @@ class RobotTeleop(InterbotixRobotNode):
         self.output = self.arm_joint_angles + [self.gripper_joint] + [0.0]
 
         # Preallocate tensors
-        self.images_tensor = torch.empty(1, 3, 3, height, width, dtype=torch.float32, device=self.device)
+        self.images_tensor = torch.empty(1, 1, 3, height, width, dtype=torch.float32, device=self.device)
         self.q_pos_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
         self.progress_tensor = torch.empty(1, 1, dtype=torch.float32, device=self.device)
 
@@ -118,9 +114,9 @@ class RobotTeleop(InterbotixRobotNode):
         self.display_images()
 
         # Convert images to tensors and normalize
-        self.images_tensor[0, 0] = torch.from_numpy(self.overhead_image).float().permute(2, 0, 1) / 255.0
-        self.images_tensor[0, 1] = torch.from_numpy(self.field_image).float().permute(2, 0, 1) / 255.0
-        self.images_tensor[0, 2] = torch.from_numpy(self.wrist_image).float().permute(2, 0, 1) / 255.0
+        # self.images_tensor[0, 0] = torch.from_numpy(self.overhead_image).float().permute(2, 0, 1) / 255.0
+        self.images_tensor[0, 0] = torch.from_numpy(self.field_image).float().permute(2, 0, 1) / 255.0
+        # self.images_tensor[0, 2] = torch.from_numpy(self.wrist_image).float().permute(2, 0, 1) / 255.0
 
         # Convert prev action to tensor
         self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
@@ -144,7 +140,7 @@ class RobotTeleop(InterbotixRobotNode):
         # Control
         self.robot_gripper_cmd.cmd = gripper
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-        self.robot.arm.set_joint_positions(joints, blocking=False)
+        # self.robot.arm.set_joint_positions(joints, blocking=False)
         print(f"Progress: {progress}\n")
 
 

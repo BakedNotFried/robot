@@ -40,7 +40,7 @@ logger.info("Data loaded")
 # Create model
 torch.set_float32_matmul_precision('high')
 model = PolicyCNNMLP().to(device)
-use_compile = True
+use_compile = config.use_compile
 if use_compile:
     logger.info("Compiling model")
     model = torch.compile(model)

@@ -6,6 +6,7 @@ with open('config.yaml', 'r') as f:
 
 # DEBUG
 debug = False
+use_compile = True
 hpc = False
 
 # Set random seed

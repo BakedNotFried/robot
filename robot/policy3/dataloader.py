@@ -20,14 +20,14 @@ class DataLoaderLite:
         assert self.num_episodes > 0, "No episodes found"
         print(f"Found {self.num_episodes} episodes")
         
-        keys = ['action', 'q_pos', 'oh_images', 'wrist_images', 'field_images', 'progress']
+        keys = ['action', 'q_pos', 'oh_images', 'field_images', 'wrist_images', 'progress']
         
         # Load all episodes into memory
         self.actions = []
         self.q_pos = []
-        self.oh_images = []
+        # self.oh_images = []
         self.field_images = []
-        self.wrist_images = []
+        # self.wrist_images = []
         self.progress = []
         
         for file_path in self.episode_files:
@@ -35,9 +35,9 @@ class DataLoaderLite:
                 data = self.extract_data_from_hdf5(file, keys)
                 self.actions.append(data[0])
                 self.q_pos.append(data[1])
-                self.oh_images.append(data[2])
-                self.wrist_images.append(data[3])
-                self.field_images.append(data[4])
+                # self.oh_images.append(data[2])
+                self.field_images.append(data[3])
+                # self.wrist_images.append(data[4])
                 self.progress.append(data[5])
 
     def extract_data_from_hdf5(self, file, keys):
@@ -47,7 +47,7 @@ class DataLoaderLite:
                 d = torch.from_numpy(file[key][:]).float() / 255.0
                 d = d.permute(0, 3, 1, 2)
                 # Resize the image to 224x224
-                d = F.interpolate(d, size=(224, 224), mode='bilinear', align_corners=False)
+                # d = F.interpolate(d, size=(224, 224), mode='bilinear', align_corners=False)
             else:
                 d = torch.from_numpy(file[key][:]).float()
             data.append(d)
@@ -72,10 +72,10 @@ class DataLoaderLite:
             start = np.random.randint(0, max_start + 1)
             action = self.actions[i][start+T].squeeze()
             q_pos = self.q_pos[i][start].squeeze()
-            oh_images = self.oh_images[i][start].unsqueeze(0)
+            # oh_images = self.oh_images[i][start].unsqueeze(0)
             field_images = self.field_images[i][start].unsqueeze(0)
-            wrist_images = self.wrist_images[i][start].unsqueeze(0)
-            images = torch.cat([oh_images, field_images, wrist_images], dim=0)
+            # wrist_images = self.wrist_images[i][start].unsqueeze(0)
+            images = torch.cat([field_images], dim=0)
             progress = self.progress[i][start].unsqueeze(0)
             
             batch_action.append(action)
