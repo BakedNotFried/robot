@@ -13,7 +13,8 @@ class WorldModelCNN(nn.Module):
 
         # Decode latent to image
         self.decoder = nn.Sequential(
-            nn.Linear(2319, 512 * 7 * 7),
+            # nn.Linear(2319, 512 * 7 * 7),
+            nn.Linear(783, 512 * 7 * 7),
             nn.ReLU(inplace=True),
             nn.Dropout(0.2),
             nn.Unflatten(1, (512, 7, 7)),

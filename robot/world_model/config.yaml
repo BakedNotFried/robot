@@ -1,29 +1,23 @@
 # Dataset settings
 dataset_dir: "/home/ben347/all/data/dual_corn/"
-local_dataset_dir: "/home/qutrll/data/pot_pick_place/"
+local_dataset_dir: "/home/qutrll/data/pot_pick_place_10hz/"
 batch_size: 8
 sequence_length: 1
 split: 0.95
 
 # Model settings
-learning_rate: 1e-4
+learning_rate: 3e-5
 # learning_rate: 1e-3
 
 # Training settings
 resume_training: False
 resume_step: None
-max_steps: 100000
+max_steps: 500000
 validation_interval: 1000
 validation_steps: 100
 checkpoint_interval: 10000
 checkpoint_dir: "/scratch3/ben347/all/data/wm_dual_corn_ckpt/1/"
-local_checkpoint_dir: "/home/qutrll/data/wm_dual_corn_ckpt/1/"
+local_checkpoint_dir: "/home/qutrll/data/wm_pot_pick_place_10hz_ckpt/1/"
 
 # Architecture settings
 architecture: "convnext_tiny + MLP"
-
-# WANDB Settings
-wandb_project: 'wm_pot_pick_place'
-run_name: '1'
-notes: 'Sequence CCNMLP, 1, sav1'
-tags: ['seq', 'ccnmlp', 'seq1', 'sav1']

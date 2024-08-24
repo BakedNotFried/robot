@@ -83,12 +83,13 @@ for step in range(start_step, config.max_steps):
     # Training step
     model.train()
     optimizer.zero_grad()
-    actions, q_pos, images, progress = train_loader.next_batch()
+    actions, q_pos, images, progress, next_progress = train_loader.next_batch()
     actions = actions.to(device)
     q_pos = q_pos.to(device)
     images = images.to(device)
     progress = progress.to(device)
-    target = torch.cat([actions, progress], dim=1)
+    next_progress = next_progress.to(device)
+    target = torch.cat([actions, next_progress], dim=1)
 
     with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
         output = model(images, q_pos, progress)
@@ -105,12 +106,13 @@ for step in range(start_step, config.max_steps):
         val_loss = 0.0
         with torch.no_grad():
             for i in range(config.validation_steps):
-                actions, q_pos, images, progress = val_loader.next_batch()
+                actions, q_pos, images, progress, next_progress = val_loader.next_batch()
                 actions = actions.to(device)
                 q_pos = q_pos.to(device)
                 images = images.to(device)
                 progress = progress.to(device)
-                target = torch.cat([actions, progress], dim=1)
+                next_progress = next_progress.to(device)
+                target = torch.cat([actions, next_progress], dim=1)
                 
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                     output = model(images, q_pos, progress)

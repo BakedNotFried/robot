@@ -1,14 +1,13 @@
-from robot.policy3.model import PolicyCNNMLP
-
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.callback_groups import ReentrantCallbackGroup
 from sensor_msgs.msg import Image
 import time
 import torch
 import numpy as np
 import cv2
 import pdb
+
+from robot.policy3.model import PolicyCNNMLP
 
 from interbotix_common_modules.common_robot.robot import InterbotixRobotNode
 from interbotix_xs_modules.xs_robot.arm import InterbotixManipulatorXS
@@ -24,6 +23,8 @@ from robot.constants import (
 from robot.robot_utils import (
     move_arms,
     torque_on,
+    control_arms,
+    control_grippers
 )
 
 class RobotTeleop(InterbotixRobotNode):
@@ -59,7 +60,7 @@ class RobotTeleop(InterbotixRobotNode):
         use_compile = True
         if use_compile:
             self.policy = torch.compile(self.policy)
-        checkpoint_path = '/home/qutrll/data/pot_pick_place_ckpt_10hz/1/checkpoint_step_1000000_seed_1337.ckpt'
+        checkpoint_path = '/home/qutrll/data/pot_pick_place_ckpt_10hz/1/checkpoint_step_800000_seed_1337.ckpt'
         checkpoint = torch.load(checkpoint_path)
         self.policy.load_state_dict(checkpoint['model_state_dict'])
 
@@ -104,13 +105,21 @@ class RobotTeleop(InterbotixRobotNode):
         self.q_pos_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
         self.progress_tensor = torch.empty(1, 1, dtype=torch.float32, device=self.device)
 
-        # Control Loop Timer
-        hz = 10
-        dt = 1/hz
-        self.control_timer = self.create_timer(dt, self.robot_control)
 
+    def process_image(self, msg):
+        return np.array(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
+    
+    def display_images(self):
+        combined_image = np.hstack((self.overhead_image, self.field_image, self.wrist_image))
+        cv2.imshow('Camera Images', combined_image)
+        cv2.waitKey(1)
 
-    def robot_control(self):
+    def overhead_image_callback(self, msg):
+        self.overhead_image = self.process_image(msg)
+
+    def field_image_callback(self, msg):
+        self.field_image = self.process_image(msg)
+
         self.display_images()
 
         # Convert images to tensors and normalize
@@ -135,28 +144,28 @@ class RobotTeleop(InterbotixRobotNode):
         gripper = self.output[6]
         progress = self.output[7]
 
-        input('Press Enter to continue...')
+        # input('Press Enter to continue...')
 
         # Control
         self.robot_gripper_cmd.cmd = gripper
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
         # self.robot.arm.set_joint_positions(joints, blocking=False)
-        print(f"Progress: {progress}\n")
-
-
-    def process_image(self, msg):
-        return np.array(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
-    
-    def display_images(self):
-        combined_image = np.hstack((self.overhead_image, self.field_image, self.wrist_image))
-        cv2.imshow('Camera Images', combined_image)
-        cv2.waitKey(1)
-
-    def overhead_image_callback(self, msg):
-        self.overhead_image = self.process_image(msg)
-
-    def field_image_callback(self, msg):
-        self.field_image = self.process_image(msg)
+        # control_grippers(
+        #     [self.robot],
+        #     [gripper],
+        #     [self.gripper_joint],
+        #     self.robot_gripper_cmd,
+        #     moving_time=0.05,
+        # )
+        control_arms(
+            [self.robot],
+            [joints],
+            [self.arm_joint_angles],
+            moving_time=0.4,
+        )
+        # self.gripper_joint = gripper
+        self.arm_joint_angles = joints
+        # print(f"Progress: {progress}\n")
         
     def wrist_image_callback(self, msg):
         self.wrist_image = self.process_image(msg)
@@ -167,7 +176,7 @@ class RobotTeleop(InterbotixRobotNode):
         self.robot.core.robot_reboot_motors('single', 'gripper', True)
         self.robot.core.robot_set_operating_modes('group', 'arm', 'position')
         self.robot.core.robot_set_operating_modes('single', 'gripper', 'current_based_position')
-        self.robot.core.robot_set_motor_registers('single', 'gripper', 'current_limit', 300)
+        self.robot.core.robot_set_motor_registers('single', 'gripper', 'current_limit', 500)
         torque_on(self.robot)
         
         # move arm to starting position

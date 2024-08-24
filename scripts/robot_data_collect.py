@@ -69,8 +69,10 @@ class RobotDataCollector(InterbotixRobotNode):
 
         # Establish the initial joint angless
         self.arm_joint_angles = START_ARM_POSE[:6]
+        self.prev_joint_angles = self.arm_joint_angles
         self.robot.arm.set_joint_positions(START_ARM_POSE[:6], blocking=False)
         self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
+        self.prev_gripper_joint = self.gripper_joint
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
 
@@ -225,21 +227,23 @@ class RobotDataCollector(InterbotixRobotNode):
                     #     avg_duration = sum(self.control_durations) / len(self.control_durations)
                     #     self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
                     #     self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
-
                     return
                 
                 # Check Lock. Updated via KeyboardInterface
                 if self.kb.lock_robot:
-                    self.prev_tele_xyz = curr_tele_xyz
-                    self.prev_tele_rpy = curr_tele_rpy
-
                     # Record Data
                     if self.kb.record_state == RECORDING:
-                        self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
+                        self.data_dict['q_pos'].append(self.prev_joint_angles + [self.prev_gripper_joint])
                         self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
                         self.im_oh.append(self.overhead_image.copy())
                         self.im_field.append(self.field_image.copy())
                         self.im_wrist.append(self.wrist_image.copy())
+                    
+                    # Set the prev
+                    self.prev_tele_xyz = curr_tele_xyz
+                    self.prev_tele_rpy = curr_tele_rpy
+                    self.prev_joint_angles = self.arm_joint_angles
+                    self.prev_gripper_joint = self.gripper_joint
 
                     # # Control Timing
                     # control_end_time = time.time()
@@ -249,7 +253,6 @@ class RobotDataCollector(InterbotixRobotNode):
                     #     avg_duration = sum(self.control_durations) / len(self.control_durations)
                     #     self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
                     #     self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
-
                     return
                 
                 # Gripper Control
@@ -271,16 +274,19 @@ class RobotDataCollector(InterbotixRobotNode):
                 tele_rpy_delta = [curr - prev  for curr, prev in zip(curr_tele_rpy, self.prev_tele_rpy)]
 
                 if tele_xyz_delta == [0, 0, 0] and tele_rpy_delta == [0, 0, 0]:
-                    self.prev_tele_xyz = curr_tele_xyz
-                    self.prev_tele_rpy = curr_tele_rpy
-
                     # Record Data
                     if self.kb.record_state == RECORDING:
-                        self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
+                        self.data_dict['q_pos'].append(self.prev_joint_angles + [self.prev_gripper_joint])
                         self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
                         self.im_oh.append(self.overhead_image.copy())
                         self.im_field.append(self.field_image.copy())
                         self.im_wrist.append(self.wrist_image.copy())
+                    
+                    # Set the prev
+                    self.prev_tele_xyz = curr_tele_xyz
+                    self.prev_tele_rpy = curr_tele_rpy
+                    self.prev_joint_angles = self.arm_joint_angles
+                    self.prev_gripper_joint = self.gripper_joint
 
                     # # Control Timing
                     # control_end_time = time.time()
@@ -290,7 +296,6 @@ class RobotDataCollector(InterbotixRobotNode):
                     #     avg_duration = sum(self.control_durations) / len(self.control_durations)
                     #     self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
                     #     self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
-
                     return
                 
                 # X, Y, Z control
@@ -311,11 +316,17 @@ class RobotDataCollector(InterbotixRobotNode):
 
                 # Record Data
                 if self.kb.record_state == RECORDING:
-                    self.data_dict['q_pos'].append(self.arm_joint_angles + [self.gripper_joint])
+                    self.data_dict['q_pos'].append(self.prev_joint_angles + [self.prev_gripper_joint])
                     self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
                     self.im_oh.append(self.overhead_image.copy())
                     self.im_field.append(self.field_image.copy())
                     self.im_wrist.append(self.wrist_image.copy())
+
+                # Set the prev
+                self.prev_tele_xyz = curr_tele_xyz
+                self.prev_tele_rpy = curr_tele_rpy
+                self.prev_joint_angles = self.arm_joint_angles
+                self.prev_gripper_joint = self.gripper_joint
 
                 # # Control Timing
                 # control_end_time = time.time()
@@ -325,11 +336,6 @@ class RobotDataCollector(InterbotixRobotNode):
                 #     avg_duration = sum(self.control_durations) / len(self.control_durations)
                 #     self.get_logger().info(f"Avg callback interval: {avg_interval:.4f}s (freq: {1/avg_interval:.2f}Hz)")
                 #     self.get_logger().info(f"Avg control duration: {avg_duration:.4f}s")
-
-                # Set the prev
-                self.prev_tele_xyz = curr_tele_xyz
-                self.prev_tele_rpy = curr_tele_rpy
-
             elif (self.kb.record_state == SAVE) and (self.kb.prev_record_state == RECORDING):
                 # Save Data
                 self.save_data()

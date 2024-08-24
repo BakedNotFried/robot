@@ -63,6 +63,7 @@ class DataLoaderLite:
         batch_q_pos = []
         batch_images = []
         batch_progress = []
+        batch_next_progress = []
         
         for i in indices:
             # For each data type, select a random starting point and extract T frames
@@ -76,17 +77,21 @@ class DataLoaderLite:
             field_images = self.field_images[i][start].unsqueeze(0)
             # wrist_images = self.wrist_images[i][start].unsqueeze(0)
             images = torch.cat([field_images], dim=0)
+            # images = torch.cat([oh_images, field_images, wrist_images], dim=0)
             progress = self.progress[i][start].unsqueeze(0)
+            next_progress = self.progress[i][start+T].unsqueeze(0)
             
             batch_action.append(action)
             batch_q_pos.append(q_pos)
             batch_images.append(images)
             batch_progress.append(progress)
+            batch_next_progress.append(next_progress)
         
         # Stack the batches
         batch_action = torch.stack(batch_action)
         batch_q_pos = torch.stack(batch_q_pos)
         batch_images = torch.stack(batch_images)
         batch_progress = torch.stack(batch_progress)
+        batch_next_progress = torch.stack(batch_next_progress)
         
-        return batch_action, batch_q_pos, batch_images, batch_progress
+        return batch_action, batch_q_pos, batch_images, batch_progress, batch_next_progress
