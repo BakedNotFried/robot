@@ -6,7 +6,7 @@ import argparse
 from itertools import repeat
 from tqdm import tqdm
 import json
-import wandb
+# import wandb
 
 from constants import TASK_CONFIGS
 from model_util import make_policy, make_optimizer
@@ -281,9 +281,9 @@ def main_train(args):
     config_path = os.path.join(ckpt_dir, 'config.pkl')
     all_config_path = os.path.join(ckpt_dir, 'all_configs.json')
     expr_name = ckpt_dir.split('/')[-1]
-    if not is_eval and args['wandb']:
-        wandb.init(project=PROJECT_NAME, reinit=True, entity=WANDB_USERNAME, name=expr_name)
-        wandb.config.update(config)
+    # if not is_eval and args['wandb']:
+    #     wandb.init(project=PROJECT_NAME, reinit=True, entity=WANDB_USERNAME, name=expr_name)
+    #     wandb.config.update(config)
     with open(config_path, 'wb') as f:
         pickle.dump(config, f)
     with open(all_config_path, 'w') as fp:
@@ -390,8 +390,8 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     torch.cuda.set_device(args.gpu_id)
-    PROJECT_NAME = 'H1'
-    WANDB_USERNAME = "WANDB_USERNAME"
+    # PROJECT_NAME = 'H1'
+    # WANDB_USERNAME = "WANDB_USERNAME"
     main_train(vars(args))
     
  
