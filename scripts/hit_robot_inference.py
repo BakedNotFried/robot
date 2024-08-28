@@ -15,11 +15,9 @@ from interbotix_xs_msgs.msg import JointSingleCommand
 # HIT
 import json
 
-from humanplus.model_util import make_policy
+from HIT.model_util import make_policy
 import random
 import pdb
-
-config_name = "train_widow"
 # HIT
 
 from robot.constants import (
@@ -62,29 +60,21 @@ class RobotTeleop(InterbotixRobotNode):
 
         # Init Policy
 
-        # Calculate the relative path
-        current_dir = Path('/home/qutrll/interbotix_ws/src/robot/scripts/')
-        config_path = Path('/home/qutrll/interbotix_ws/src/robot/robot/vq_bet_official/examples/configs/train_widow.yaml')
-        relative_path = os.path.relpath(config_path.parent, current_dir)
+        policy_class = 'HIT'
+        config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/_pot_pick_place_HIT_resnet18_True/all_configs.json"
+        config = json.load(open(config_dir))
+        policy_config = config['policy_config']
 
-        # Initialize Hydra with the relative path
-        initialize(config_path=relative_path, version_base="1.2")
-        
-        # Load the configuration
-        cfg = compose(config_name="train_widow")
+        seed_everything(42)
 
-        print(OmegaConf.to_yaml(cfg))
-
-        seed_everything(cfg.seed)
+        self.policy = make_policy(policy_class, policy_config)
+        self.policy.eval()
+        loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/_pot_pick_place_HIT_resnet18_True/policy_step_100000_seed_42.ckpt", map_location='cuda'))
+        if not loading_status:
+            print(f'Failed to load policy_last.ckpt')
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        assert self.device == torch.device("cuda"), "CUDA is not available"
-        # torch.set_float32_matmul_precision('high')
-
-        cfg.model.gpt_model.config.input_dim = 1024
-        self.cbet_model = hydra.utils.instantiate(cfg.model).to(cfg.device)
-        self.cbet_model.eval()
-        load_path = Path(cfg.save_path)
-        self.cbet_model.load_model(load_path)
+        assert self.device.type == "cuda", "CUDA is not available"
+        self.policy = self.policy.to(self.device)
 
         # Cameras Setup
         height = 240
@@ -150,22 +140,24 @@ class RobotTeleop(InterbotixRobotNode):
         # self.images_tensor[0, 2] = torch.from_numpy(self.wrist_image).float().permute(2, 0, 1) / 255.0
 
         # Convert prev action to tensor
-        # self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
+        self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
         # self.progress_tensor[0] = torch.tensor(self.output[7], dtype=torch.float32, device=self.device)
 
         # Forward pass
         with torch.no_grad():
-            output, _, _ = self.cbet_model(self.images_tensor, None, None)
+            output = self.policy.forward_inf(self.q_pos_tensor, self.images_tensor)
         
         # Convert to numpy, handling BFloat16
         output = output.float().cpu().numpy().squeeze()
+        selection_index = 8
+        output = output[selection_index]
         self.output = output.tolist()
 
         joints = self.output[:6]
         gripper = self.output[6]
         # progress = self.output[7]
 
-        # Print current joint angles and gripper joint vs predicted
+        # # Print current joint angles and gripper joint vs predicted
         # print()
         # print(f"Current joint angles: {self.arm_joint_angles}")
         # print(f"Predicted joint angles: {joints}")
@@ -176,7 +168,6 @@ class RobotTeleop(InterbotixRobotNode):
         # # Print difference in joint angles
         # print(f"Joint angle difference: {np.array(joints) - np.array(self.arm_joint_angles)}")
         # print()
-
 
         # input('Press Enter to continue...')
 

@@ -1,5 +1,8 @@
 
-from policy import ACTPolicy, HITPolicy
+try:
+    from HIT.policy import ACTPolicy, HITPolicy
+except:
+    from policy import ACTPolicy, HITPolicy
 
 
 def make_policy(policy_class, policy_config):
