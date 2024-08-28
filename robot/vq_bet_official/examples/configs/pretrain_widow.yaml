@@ -1,0 +1,42 @@
+defaults:
+  - env_vars: env_vars
+  - _self_
+
+seed: 42
+window_size: 1
+goal_window_size: 1
+eval_window_size: 1
+batch_size: 1024
+epochs: 10
+eval_freq: 10
+eval_on_env_freq: 25
+num_env_evals: 5
+num_final_evals: 20
+num_final_eval_per_goal: 5
+action_window_size: 1
+
+wandb:
+  project: "vq-bet"
+  entity: ${env_vars.wandb_entity}
+
+device: cuda
+optim:
+  lr: 5.5e-5
+  weight_decay: 2e-4
+  betas: [0.9, 0.999]
+
+
+save_every: 10
+save_path: "/home/qutrll/data/checkpoints/vq_bet/vae/1"
+load_path: null
+
+vqvae_model:
+  _target_: vqvae.VqVae
+  input_dim_h: 1
+  input_dim_w: 7
+  n_latent_dims: 512
+  vqvae_n_embed: 16
+  vqvae_groups: 2
+  eval: false
+  device: ${device}
+  encoder_loss_multiplier: 1

@@ -60,7 +60,7 @@ class RobotTeleop(InterbotixRobotNode):
         use_compile = True
         if use_compile:
             self.policy = torch.compile(self.policy)
-        checkpoint_path = '/home/qutrll/data/pot_pick_place_ckpt_10hz/1/checkpoint_step_800000_seed_1337.ckpt'
+        checkpoint_path = '/home/qutrll/data/pot_pick_place_ckpt_10hz/2/checkpoint_step_800000_seed_1337.ckpt'
         checkpoint = torch.load(checkpoint_path)
         self.policy.load_state_dict(checkpoint['model_state_dict'])
 
@@ -134,7 +134,7 @@ class RobotTeleop(InterbotixRobotNode):
         # Forward pass
         with torch.no_grad():
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                output = self.policy(self.images_tensor, self.q_pos_tensor, self.progress_tensor)
+                output = self.policy(self.images_tensor, self.q_pos_tensor)
         
         # Convert to numpy, handling BFloat16
         output = output.float().cpu().numpy().squeeze()
@@ -144,7 +144,7 @@ class RobotTeleop(InterbotixRobotNode):
         gripper = self.output[6]
         progress = self.output[7]
 
-        # input('Press Enter to continue...')
+        input('Press Enter to continue...')
 
         # Control
         self.robot_gripper_cmd.cmd = gripper

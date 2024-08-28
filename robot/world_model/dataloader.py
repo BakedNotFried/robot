@@ -65,7 +65,7 @@ class DataLoaderLite:
             # For each data type, select a random starting point and extract T frames
             episode_length = self.actions[i].shape[0]
             max_start = max(0, episode_length - T - 1)
-            start = np.random.randint(0, max_start + 1)
+            start = np.random.randint(0, max_start)
             
             action = self.actions[i][start+T].squeeze()
             q_pos = self.q_pos[i][start].squeeze()
