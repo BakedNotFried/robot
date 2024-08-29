@@ -85,8 +85,9 @@ class BehaviorTransformer(nn.Module):
         )
 
         if visual_input:
+            # Changed to map combined image and q_pos to the latent space
             self._resnet_header = MLP(
-                in_channels=512,
+                in_channels=519,
                 hidden_channels=[1024],
             )
         self._collected_actions = []
@@ -129,6 +130,7 @@ class BehaviorTransformer(nn.Module):
     def forward(
         self,
         obs_seq: torch.Tensor,
+        q_pos: torch.Tensor,
         goal_seq: Optional[torch.Tensor],
         action_seq: Optional[torch.Tensor],
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
@@ -137,11 +139,12 @@ class BehaviorTransformer(nn.Module):
         
         if goal_seq is not None:
             goal_seq = self._process_images(goal_seq)
-        return self._predict(obs_seq, goal_seq, action_seq)
+        return self._predict(obs_seq, q_pos, goal_seq, action_seq)
 
     def _predict(
         self,
         obs_seq: torch.Tensor,
+        q_pos: torch.Tensor,
         goal_seq: Optional[torch.Tensor],
         action_seq: Optional[torch.Tensor],
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Dict[str, float]]:
@@ -149,7 +152,10 @@ class BehaviorTransformer(nn.Module):
         if self.visual_input:
             obs_seq = obs_seq.cuda()
             if obs_seq.ndim == 3:
-                obs_seq = obs_seq.clone().detach()
+                # obs_seq = obs_seq.clone().detach()
+                # Combine the image and q_pos
+                q_pos = q_pos.unsqueeze(1)
+                obs_seq = torch.cat([obs_seq, q_pos], dim=2)
                 obs_seq = self._resnet_header(obs_seq)
             else:
                 N = obs_seq.shape[0]
@@ -218,6 +224,12 @@ class BehaviorTransformer(nn.Module):
             gpt_output = gpt_output
         else:
             gpt_output = gpt_output[:, goal_seq.size(1) :, :]
+
+        # At this step, we have the output from the GPT model.
+        # Clone and Detach the output to avoid backpropagation.
+        # Train a decoder to predict the next image via reconstruction loss.
+        hs_output = gpt_output.clone()
+
         gpt_output = einops.rearrange(gpt_output, "N T (G C) -> (N T) (G C)", G=self._G)
         obs = einops.rearrange(obs_seq, "N T O -> (N T) O")
         obs = obs.unsqueeze(dim=1)
@@ -415,9 +427,9 @@ class BehaviorTransformer(nn.Module):
                 "action_diff_mean_res2": action_diff_mean_res2.detach().cpu().item(),
                 "action_diff_max": action_diff_max.detach().cpu().item(),
             }
-            return predicted_action, loss, loss_dict
+            return predicted_action, loss, loss_dict, hs_output
 
-        return predicted_action, None, {}
+        return predicted_action, None, {}, hs_output
 
     def configure_optimizers(self, weight_decay, learning_rate, betas):
         optimizer1 = self._gpt_model.configure_optimizers(

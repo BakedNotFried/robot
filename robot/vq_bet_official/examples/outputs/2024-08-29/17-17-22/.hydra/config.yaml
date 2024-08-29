@@ -1,7 +1,12 @@
-defaults:
-  - env_vars: env_vars
-  - _self_
-
+env_vars:
+  dataset_path: /home/qutrll/vq_bet_official/vqbet_datasets_for_release
+  save_path: /home/qutrll/vq_bet_official
+  wandb_entity: YOUR_WANDB_ENTITY
+  datasets:
+    ant: ${env_vars.dataset_path}/ant
+    relay_kitchen: ${env_vars.dataset_path}/relay_kitchen
+    pusht: ${env_vars.dataset_path}/pusht
+    ur3: ${env_vars.dataset_path}/ur3
 seed: 42
 window_size: 1
 goal_window_size: 1
@@ -14,22 +19,19 @@ num_env_evals: 5
 num_final_evals: 20
 num_final_eval_per_goal: 5
 action_window_size: 10
-
 wandb:
-  project: "vq-bet"
+  project: vq-bet
   entity: ${env_vars.wandb_entity}
-
 device: cuda
 optim:
-  lr: 3e-4
-  weight_decay: 2e-4
-  betas: [0.9, 0.999]
-
-
+  lr: 0.0003
+  weight_decay: 0.0002
+  betas:
+  - 0.9
+  - 0.999
 save_every: 10
-save_path: "/home/qutrll/data/checkpoints/vq_bet/vae/2"
+save_path: /home/qutrll/data/checkpoints/vq_bet/vae/2
 load_path: null
-
 vqvae_model:
   _target_: vqvae.VqVae
   input_dim_h: 1

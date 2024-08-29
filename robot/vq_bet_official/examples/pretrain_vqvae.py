@@ -8,16 +8,14 @@ import torch
 import tqdm
 from omegaconf import OmegaConf
 from vqvae.vqvae import *
-import wandb
 
-from dataloader import DataLoaderLite
+from vq_bet_official.examples.dataloader import DataLoaderLite
 
 import pdb
 
 import time
 
 config_name = "pretrain_widow"
-
 
 def seed_everything(random_seed: int):
     np.random.seed(random_seed)
@@ -31,36 +29,34 @@ def main(cfg):
     save_path.mkdir(parents=True, exist_ok=True)
 
     vqvae_model = hydra.utils.instantiate(cfg.vqvae_model)
+
     print(OmegaConf.to_yaml(cfg))
     seed_everything(cfg.seed)
-    # train_data, test_data = hydra.utils.instantiate(cfg.data)
-    # train_loader = torch.utils.data.DataLoader(
-    #     train_data, batch_size=cfg.batch_size, shuffle=True, pin_memory=False
-    # )
+
     # My Dataloader
     dataset_dir = '/home/qutrll/data/pot_pick_place_2_10hz'
     episodes = os.listdir(dataset_dir)
     num_episodes = len(episodes)
     train_episodes = int(num_episodes)
     train_indices = np.random.choice(num_episodes, size=train_episodes, replace=False)
-    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 64, 1, 'train', train_indices)
+    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 32, 10, 'train', train_indices)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     assert device.type == "cuda", "CUDA is not available"
 
-    num_steps = 10000
+    num_steps = 100000
     for _ in tqdm.trange(num_steps):
 
-        act, _, _, _, _ = train_loader.next_batch()
-        act = act.unsqueeze(1)
+        act, _, _, _, next_progress = train_loader.next_batch()
         act = act.to(device)
-
+        next_progress = next_progress.to(device)
+        action = torch.cat((act, next_progress), dim=-1)
         (
             encoder_loss,
             vq_loss_state,
             vq_code,
             vqvae_recon_loss,
-        ) = vqvae_model.vqvae_update(act)  # N T D
+        ) = vqvae_model.vqvae_update(action)  # N T D
 
     state_dict = vqvae_model.state_dict()
     torch.save(state_dict, os.path.join(save_path, "trained_vqvae.pt"))
