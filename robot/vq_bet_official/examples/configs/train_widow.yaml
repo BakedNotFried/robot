@@ -21,7 +21,7 @@ visual_input: true # true: image-based policy, false: state-based policy
 
 device: cuda
 optim:
-  lr: 5.5e-5
+  lr: 3e-4
   weight_decay: 2e-4
   betas: [0.9, 0.999]
 
@@ -57,4 +57,4 @@ model:
     device: ${device}
     load_dir: ${vqvae_load_dir}
   offset_loss_multiplier: 100
-  secondary_code_multiplier: 1
+  secondary_code_multiplier: 0.5

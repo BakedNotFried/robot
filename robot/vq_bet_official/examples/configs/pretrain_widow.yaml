@@ -21,7 +21,7 @@ wandb:
 
 device: cuda
 optim:
-  lr: 5.5e-5
+  lr: 3e-4
   weight_decay: 2e-4
   betas: [0.9, 0.999]
 

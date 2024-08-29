@@ -17,7 +17,7 @@ TASK_CONFIGS = {
     'camera_names': ['cam_field'],
     'observation_name': ['qpos'],
     'state_dim':7,
-    'action_dim':7,
+    'action_dim':8,
     'state_mask': None,
     'action_mask': None,
     },

@@ -22,9 +22,8 @@ def seed_everything(random_seed: int):
     random.seed(random_seed)
 
 def forward_pass(data, policy):
-    image_data, qpos_data, action_data, _ = data
-    image_data, qpos_data, action_data = image_data.cuda(), qpos_data.cuda(), action_data.cuda()
-    return policy(qpos_data, image_data, action_data, None)
+    image_data, qpos_data, action_data, next_image_data = data
+    return policy(qpos_data, image_data, action_data, next_image_data)
 
 def train_bc(train_dataloader, val_dataloader, config):
     num_steps = config['num_steps']
@@ -38,6 +37,7 @@ def train_bc(train_dataloader, val_dataloader, config):
     seed_everything(42)
 
     policy = make_policy(policy_class, policy_config)
+
     if config['load_pretrain']:
         loading_status = policy.deserialize(torch.load(f'{config["pretrained_path"]}/policy_last.ckpt', map_location='cuda'))
         print(f'loaded! {loading_status}')
@@ -48,7 +48,9 @@ def train_bc(train_dataloader, val_dataloader, config):
     optimizer = make_optimizer(policy_class, policy)
     if config['load_pretrain']:
         optimizer.load_state_dict(torch.load(f'{config["pretrained_path"]}/optimizer_last.ckpt', map_location='cuda'))
-        
+    
+    # optimizer for the world model
+    world_model_optimizer = torch.optim.AdamW(policy.world_model.parameters(), lr=3e-5)
 
     # Dataloader
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -61,7 +63,7 @@ def train_bc(train_dataloader, val_dataloader, config):
     train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 32, 10, 'train', train_indices)
     data = [None, None, None, None]
     
-    train_dataloader = repeater(train_dataloader)
+    # train_dataloader = repeater(train_dataloader)
     for step in tqdm(range(num_steps+1)):
         # if step % validate_every == 0:
         #     print('validating')
@@ -94,28 +96,56 @@ def train_bc(train_dataloader, val_dataloader, config):
         # training
         policy.train()
         optimizer.zero_grad()
-        # data = next(train_dataloader)
+        world_model_optimizer.zero_grad()
 
-        action, q_pos, images, _, _ = train_loader.next_batch()
+        action, q_pos, images, next_progress, next_images = train_loader.next_batch()
         action = action.to(device)
         q_pos = q_pos.to(device)
         images = images.to(device)
+        next_progress = next_progress.to(device)
+        next_images = next_images.to(device)
+        # Combine action and progress
+        action = torch.cat([action, next_progress], dim=2)
         data[0] = images
         data[1] = q_pos
         data[2] = action
-        data[3] = None
+        data[3] = next_images
 
+        # Forward pass
         forward_dict = forward_pass(data, policy)
-        # backward
+
+        # backward for Policy
+        policy_loss = forward_dict['policy_loss']
+        policy_loss.backward()
+        optimizer.step()
+
+        # backward for World Model
+        world_model_loss = forward_dict['world_model_loss']
+        world_model_loss.backward()
+        world_model_optimizer.step()
+
+
         # if config['wandb']:
         #     wandb.log(forward_dict, step=step) # not great, make training 1-2% slower
 
+        # Save
         if (step > save_every) and (step % save_every) == 0:
             ckpt_path = os.path.join(ckpt_dir, f'policy_step_{step}_seed_{seed}.ckpt')
             torch.save(policy.serialize(), ckpt_path)
-            #save optimizer state
-            optimizer_ckpt_path = os.path.join(ckpt_dir, f'optimizer_step_{step}_seed_{seed}.ckpt')
-            torch.save(optimizer.state_dict(), optimizer_ckpt_path)
+            
+            # Save optimizers
+            optimizer_ckpt_path = os.path.join(ckpt_dir, f'optimizers_step_{step}_seed_{seed}.ckpt')
+            torch.save({
+                'policy_optimizer': optimizer.state_dict(),
+                'world_model_optimizer': world_model_optimizer.state_dict()
+            }, optimizer_ckpt_path)
+        # if (step > save_every) and (step % save_every) == 0:
+        #     ckpt_path = os.path.join(ckpt_dir, f'policy_step_{step}_seed_{seed}.ckpt')
+        #     torch.save(policy.serialize(), ckpt_path)
+        #     #save optimizer state
+        #     optimizer_ckpt_path = os.path.join(ckpt_dir, f'optimizer_step_{step}_seed_{seed}.ckpt')
+        #     torch.save(optimizer.state_dict(), optimizer_ckpt_path)
+
         # if step % 2000 == 0:
         #     ckpt_path = os.path.join(ckpt_dir, f'policy_last.ckpt')
         #     torch.save(policy.serialize(), ckpt_path)

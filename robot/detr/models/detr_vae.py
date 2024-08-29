@@ -65,7 +65,7 @@ class DETRVAE_Decoder(nn.Module):
         self.additional_pos_embed = nn.Embedding(1, hidden_dim) # learned position embedding for proprio and latent
         self.feature_loss = feature_loss
           
-    def forward(self, qpos, image):
+    def forward(self, qpos, image, actions, next_image):
         if self.feature_loss:
             # bs,_,_,h,w = image.shape
             image_future = image[:,len(self.camera_names):].clone()
