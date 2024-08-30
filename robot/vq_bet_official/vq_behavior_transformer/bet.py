@@ -86,10 +86,16 @@ class BehaviorTransformer(nn.Module):
 
         if visual_input:
             # Changed to map combined image and q_pos to the latent space
+            # self._resnet_header = MLP(
+            #     in_channels=519,
+            #     hidden_channels=[1024],
+            # )
+            # Changed to map q_pos to the latent space
             self._resnet_header = MLP(
-                in_channels=519,
-                hidden_channels=[1024],
+                in_channels=7,
+                hidden_channels=[512],
             )
+
         self._collected_actions = []
         self._have_fit_kmeans = False
         self._offset_loss_multiplier = offset_loss_multiplier
@@ -103,22 +109,22 @@ class BehaviorTransformer(nn.Module):
         self.resnet = models.resnet18(pretrained=True)
         self.resnet = nn.Sequential(*(list(self.resnet.children())[:-1]))
 
-        # Image transformation
-        self.transform = transforms.Compose([
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.255])
-        ])
+        # # Image transformation
+        # self.transform = transforms.Compose([
+        #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.255])
+        # ])
 
     def _process_images(self, images):
         # images shape: [B, 1, 3, 240, 424]
         B, T, C, H, W = images.shape
         images = images.view(B*T, C, H, W)
         
-        # Resize images to 224x224 if needed
-        if H != 224 or W != 224:
-            images = F.interpolate(images, size=(224, 224), mode='bilinear', align_corners=False)
+        # # Resize images to 224x224 if needed
+        # if H != 224 or W != 224:
+        #     images = F.interpolate(images, size=(224, 224), mode='bilinear', align_corners=False)
         
-        # Normalize images
-        images = self.transform(images / 255.0)
+        # # Normalize images
+        # images = self.transform(images / 255.0)
         
         # Pass through ResNet
         features = self.resnet(images)
@@ -155,8 +161,8 @@ class BehaviorTransformer(nn.Module):
                 # obs_seq = obs_seq.clone().detach()
                 # Combine the image and q_pos
                 q_pos = q_pos.unsqueeze(1)
+                q_pos = self._resnet_header(q_pos)
                 obs_seq = torch.cat([obs_seq, q_pos], dim=2)
-                obs_seq = self._resnet_header(obs_seq)
             else:
                 N = obs_seq.shape[0]
                 if obs_seq.shape[-1] == 3:
@@ -218,6 +224,7 @@ class BehaviorTransformer(nn.Module):
             gpt_input = torch.cat([goal_seq, obs_seq], dim=-1)
         else:
             raise NotImplementedError
+        
         gpt_output = self._gpt_model(gpt_input)
 
         if self._cbet_method == self.GOAL_SPEC.unconditional:

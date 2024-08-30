@@ -260,7 +260,7 @@ class RobotInference(InterbotixRobotNode):
         # Convert images to tensors and normalize
         # self.images_tensor[0, 0] = torch.from_numpy(self.overhead_image).float().permute(2, 0, 1) / 255.0
         self.images_tensor[0, 0] = torch.from_numpy(self.field_image).float().permute(2, 0, 1) / 255.0
-        self.reshaped_images_tensor = F.interpolate(self.images_tensor, size=(3, 224, 224), mode='trilinear', align_corners=False)
+        self.reshaped_images_tensor = F.interpolate(self.images_tensor, size=(3, 224, 224), mode='bilinear', align_corners=False)
         # self.images_tensor[0, 2] = torch.from_numpy(self.wrist_image).float().permute(2, 0, 1) / 255.0
 
         # Convert prev action to tensor
@@ -319,13 +319,13 @@ class RobotInference(InterbotixRobotNode):
 
         # Control Robot
         self.robot_gripper_cmd.cmd = gripper
-        # self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-        # control_arms(
-        #     [self.robot],
-        #     [joints],
-        #     [self.arm_joint_angles],
-        #     moving_time=0.4,
-        # )
+        self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+        control_arms(
+            [self.robot],
+            [joints],
+            [self.arm_joint_angles],
+            moving_time=0.4,
+        )
         self.arm_joint_angles = joints
         
     def wrist_image_callback(self, msg):

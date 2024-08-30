@@ -44,7 +44,7 @@ def main(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     assert device.type == "cuda", "CUDA is not available"
 
-    num_steps = 100000
+    num_steps = 50000
     for _ in tqdm.trange(num_steps):
 
         act, _, _, _, next_progress = train_loader.next_batch()
