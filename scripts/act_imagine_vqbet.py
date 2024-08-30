@@ -73,7 +73,7 @@ class WorldModel(nn.Module):
 
     def forward(self, latents, actions):
         combined = torch.cat([latents.squeeze(), actions.squeeze()], dim=-1)
-        if combined.dim() == 1:
+        if len(combined.shape) == 1:
             combined = combined.unsqueeze(0)
         return self.decoder(combined)
     
@@ -132,7 +132,7 @@ class RobotInference(InterbotixRobotNode):
         self.world_model = WorldModel()
         self.world_model = self.world_model.to(cfg.device)
         self.world_model.eval()
-        world_model_path = "/home/qutrll/data/checkpoints/vq_bet/model/2/world_model.pt"
+        world_model_path = "/home/qutrll/data/checkpoints/vq_bet/model/3/world_model.pt"
         self.world_model.load_state_dict(torch.load(world_model_path))
 
         # Init Visual Encoder
@@ -171,10 +171,6 @@ class RobotInference(InterbotixRobotNode):
         #     1, 
         # )
 
-        # Define normalization parameters
-        self.normalize_mean = torch.tensor([0.485, 0.456, 0.406], device=self.device)
-        self.normalize_std = torch.tensor([0.229, 0.224, 0.255], device=self.device)
-
         # Establish the initial joint angles
         self.arm_joint_angles = START_ARM_POSE[:6]
         self.robot.arm.set_joint_positions(START_ARM_POSE[:6], blocking=False)
@@ -187,9 +183,7 @@ class RobotInference(InterbotixRobotNode):
 
         # Preallocate tensors
         self.images_tensor = torch.empty(1, 1, 3, self.height, self.width, dtype=torch.float32, device=self.device)
-        self.action_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
         self.q_pos_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
-        self.progress_tensor = torch.empty(1, 1, dtype=torch.float32, device=self.device)
         self.next_image = None
 
         # Setup Plotting
@@ -201,27 +195,29 @@ class RobotInference(InterbotixRobotNode):
         self.frame_count = 0
 
         # Set up the plot
-        plt.ion()
-        self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(10, 15))
-        self.fig.tight_layout(pad=3.0)
+        self.use_displays = True
+        if self.use_displays:
+            plt.ion()
+            self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(10, 15))
+            self.fig.tight_layout(pad=3.0)
 
-        # Initialize lines for each plot
-        self.mse_line, = self.ax1.plot([], [], 'r-')
-        self.progress_line, = self.ax2.plot([], [], 'b-')
-        self.gradient_line, = self.ax3.plot([], [], 'g-')
+            # Initialize lines for each plot
+            self.mse_line, = self.ax1.plot([], [], 'r-')
+            self.progress_line, = self.ax2.plot([], [], 'b-')
+            self.gradient_line, = self.ax3.plot([], [], 'g-')
 
-        # Set up the axes
-        self.ax1.set_title('MSE Loss')
-        self.ax2.set_title('Progress')
-        self.ax3.set_title('Progress Gradient')
+            # Set up the axes
+            self.ax1.set_title('MSE Loss')
+            self.ax2.set_title('Progress')
+            self.ax3.set_title('Progress Gradient')
 
-        for ax in (self.ax1, self.ax2, self.ax3):
-            ax.set_xlim(0, 100)
-            ax.grid(True)
+            for ax in (self.ax1, self.ax2, self.ax3):
+                ax.set_xlim(0, 100)
+                ax.grid(True)
 
-        self.ax1.set_ylim(0, 1)
-        self.ax2.set_ylim(0, 1)
-        self.ax3.set_ylim(-0.1, 0.1)
+            self.ax1.set_ylim(0, 1)
+            self.ax2.set_ylim(0, 1)
+            self.ax3.set_ylim(-0.1, 0.1)
 
 
     def process_image(self, msg):
@@ -310,7 +306,7 @@ class RobotInference(InterbotixRobotNode):
     def field_image_callback(self, msg):
         self.field_image = self.process_image(msg)
 
-        if self.next_image is not None:
+        if self.use_displays and self.next_image is not None:
             self.display_images()
 
         # Convert images to tensors and normalize
@@ -323,7 +319,6 @@ class RobotInference(InterbotixRobotNode):
 
         # Convert prev action to tensor
         self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
-        self.progress_tensor[0] = torch.tensor(self.output[7], dtype=torch.float32, device=self.device)
 
         # VGG Encoder Forward Pass
         if self.next_image is not None:
@@ -348,6 +343,7 @@ class RobotInference(InterbotixRobotNode):
         with torch.no_grad():
             self.next_image = self.world_model(hs_output, output)
 
+        # For display
         self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
         self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
 
@@ -358,17 +354,17 @@ class RobotInference(InterbotixRobotNode):
         gripper = self.output[6]
         progress = self.output[7]
 
-        input('Press Enter to continue...')
+        # input('Press Enter to continue...')
 
         # Control Robot
         self.robot_gripper_cmd.cmd = gripper
-        # self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-        # control_arms(
-        #     [self.robot],
-        #     [joints],
-        #     [self.arm_joint_angles],
-        #     moving_time=1.0,
-        # )
+        self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+        control_arms(
+            [self.robot],
+            [joints],
+            [self.arm_joint_angles],
+            moving_time=0.4,
+        )
         self.arm_joint_angles = joints
         
     def wrist_image_callback(self, msg):

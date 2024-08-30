@@ -2,7 +2,7 @@
 dataset_dir: "/home/ben347/all/data/dual_corn/"
 local_dataset_dir: "/home/qutrll/data/pot_pick_place_2_10hz/"
 batch_size: 8
-sequence_length: 1
+sequence_length: 10
 split: 0.95
 
 # Model settings
@@ -15,9 +15,9 @@ resume_step: 0
 max_steps: 1000000
 validation_interval: 1000
 validation_steps: 100
-checkpoint_interval: 10000
+checkpoint_interval: 50000
 checkpoint_dir: "/scratch3/ben347/all/data/dual_corn_ckpt/1/"
-local_checkpoint_dir: "/home/qutrll/data/pot_pick_place_ckpt_10hz/2/"
+local_checkpoint_dir: "/home/qutrll/data/checkpoints/cnn_mlp/1/"
 
 # Architecture settings
 architecture: "convnext_tiny + MLP"

@@ -6,11 +6,11 @@ with open('config.yaml', 'r') as f:
 
 # DEBUG
 debug = False
-use_compile = True
+use_compile = False
 hpc = False
 
 # Set random seed
-seed = 1337
+seed = 42
 
 # Device settings
 if hpc:

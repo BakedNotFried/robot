@@ -131,9 +131,7 @@ class RobotInference(InterbotixRobotNode):
 
         # Preallocate tensors
         self.images_tensor = torch.empty(1, 1, 3, self.height, self.width, dtype=torch.float32, device=self.device)
-        self.action_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
         self.q_pos_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
-        self.progress_tensor = torch.empty(1, 1, dtype=torch.float32, device=self.device)
         self.next_image = None
 
         # Setup Plotting
@@ -145,27 +143,29 @@ class RobotInference(InterbotixRobotNode):
         self.frame_count = 0
 
         # Set up the plot
-        plt.ion()
-        self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(10, 15))
-        self.fig.tight_layout(pad=3.0)
+        self.use_displays = False
+        if self.use_displays:
+            plt.ion()
+            self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(10, 15))
+            self.fig.tight_layout(pad=3.0)
 
-        # Initialize lines for each plot
-        self.mse_line, = self.ax1.plot([], [], 'r-')
-        self.progress_line, = self.ax2.plot([], [], 'b-')
-        self.gradient_line, = self.ax3.plot([], [], 'g-')
+            # Initialize lines for each plot
+            self.mse_line, = self.ax1.plot([], [], 'r-')
+            self.progress_line, = self.ax2.plot([], [], 'b-')
+            self.gradient_line, = self.ax3.plot([], [], 'g-')
 
-        # Set up the axes
-        self.ax1.set_title('MSE Loss')
-        self.ax2.set_title('Progress')
-        self.ax3.set_title('Progress Gradient')
+            # Set up the axes
+            self.ax1.set_title('MSE Loss')
+            self.ax2.set_title('Progress')
+            self.ax3.set_title('Progress Gradient')
 
-        for ax in (self.ax1, self.ax2, self.ax3):
-            ax.set_xlim(0, 100)
-            ax.grid(True)
+            for ax in (self.ax1, self.ax2, self.ax3):
+                ax.set_xlim(0, 100)
+                ax.grid(True)
 
-        self.ax1.set_ylim(0, 1)
-        self.ax2.set_ylim(0, 1)
-        self.ax3.set_ylim(-0.1, 0.1)
+            self.ax1.set_ylim(0, 1)
+            self.ax2.set_ylim(0, 1)
+            self.ax3.set_ylim(-0.1, 0.1)
 
 
     def process_image(self, msg):
@@ -254,18 +254,19 @@ class RobotInference(InterbotixRobotNode):
     def field_image_callback(self, msg):
         self.field_image = self.process_image(msg)
 
-        if self.next_image is not None:
+        if self.use_displays and self.next_image is not None:
             self.display_images()
 
         # Convert images to tensors and normalize
         # self.images_tensor[0, 0] = torch.from_numpy(self.overhead_image).float().permute(2, 0, 1) / 255.0
         self.images_tensor[0, 0] = torch.from_numpy(self.field_image).float().permute(2, 0, 1) / 255.0
-        self.reshaped_images_tensor = F.interpolate(self.images_tensor, size=(3, 224, 224), mode='bilinear', align_corners=False)
+        reshaped_tensor = self.images_tensor.squeeze(1)
+        self.reshaped_images_tensor = F.interpolate(reshaped_tensor, size=(224, 224), mode='bilinear', align_corners=False)
+        self.reshaped_images_tensor = self.reshaped_images_tensor.unsqueeze(0)
         # self.images_tensor[0, 2] = torch.from_numpy(self.wrist_image).float().permute(2, 0, 1) / 255.0
 
         # Convert prev action to tensor
         self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
-        self.progress_tensor[0] = torch.tensor(self.output[7], dtype=torch.float32, device=self.device)
 
         # VGG Encoder Forward Pass
         if self.next_image is not None:
@@ -283,26 +284,15 @@ class RobotInference(InterbotixRobotNode):
             mse_loss = self.loss_fn(current_image_encoded, next_image_encoded)
             self.mse_loss_data.append(mse_loss.item())
 
-        # # Policy Forward Pass
-        # with torch.no_grad():
-        #     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-        #         output = self.policy(self.images_tensor, self.q_pos_tensor, self.progress_tensor)
-
-        # # World Model Forward Pass
-        # self.action_tensor[0] = output[0, 0:7]
-        # with torch.no_grad():
-        #     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-        #         self.next_image = self.world_model(self.images_tensor, self.action_tensor, self.q_pos_tensor, self.progress_tensor)
-        # # Convert the predicted image tensor to numpy array for display
-        # self.predicted_image = self.next_image[0].float().permute(1, 2, 0).cpu().numpy()
-        # self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
-
         # Policy Forward Pass
         with torch.no_grad():
             output, hs_img = self.policy.forward_inf(self.q_pos_tensor, self.reshaped_images_tensor)
+
         # World Model Forward Pass
         with torch.no_grad():
             self.next_image = self.policy.forward_world_model(hs_img, output)
+
+        # For display
         self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
         self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
 
@@ -313,7 +303,6 @@ class RobotInference(InterbotixRobotNode):
         self.output = output.tolist()
         joints = self.output[:6]
         gripper = self.output[6]
-        progress = self.output[7]
 
         input('Press Enter to continue...')
 

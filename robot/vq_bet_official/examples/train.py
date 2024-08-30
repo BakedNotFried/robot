@@ -87,12 +87,12 @@ def main(cfg):
     train_episodes = int(num_episodes)
     train_indices = np.random.choice(num_episodes, size=train_episodes, replace=False)
     action_selection = 1
-    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 32, action_selection, 'train', train_indices)
+    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 8, action_selection, 'train', train_indices)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     assert device.type == "cuda", "CUDA is not available"
 
-    num_steps = 500000
+    num_steps = 200000
     for step in tqdm.trange(num_steps):
         # Zero out gradients
         optimizer["optimizer1"].zero_grad()
@@ -128,10 +128,10 @@ def main(cfg):
         world_model_loss.backward()
         optimizer_world_model.step()
 
-        # if step > 10000 and step % 10000 == 0:
-        #     cbet_model.save_model(save_path)
-        #     world_model_path = save_path / "world_model.pt"
-        #     torch.save(world_model.state_dict(), world_model_path)
+        if step > 10000 and step % 10000 == 0:
+            cbet_model.save_model(save_path)
+            world_model_path = save_path / "world_model.pt"
+            torch.save(world_model.state_dict(), world_model_path)
 
 
 if __name__ == "__main__":
