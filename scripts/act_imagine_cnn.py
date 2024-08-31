@@ -139,40 +139,57 @@ class RobotInference(InterbotixRobotNode):
         self.images_tensor = torch.empty(1, 1, 3, self.height, self.width, dtype=torch.float32, device=self.device)
         self.q_pos_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
         self.next_image = None
+        self.progress = None
 
         # Setup Plotting
         # Initialize deques to store data for plotting
         self.mse_loss_data = deque(maxlen=100)
+        self.normalized_mse_loss_data = deque(maxlen=100)
+        self.smoothed_mse_loss_data = deque(maxlen=100)
         self.progress_data = deque(maxlen=100)
         self.progress_gradient_data = deque(maxlen=100)
+        self.progress_gradient_variance_data = deque(maxlen=100)
+        self.progress_second_derivative_data = deque(maxlen=100)
         self.x_data = deque(maxlen=100)
         self.frame_count = 0
+        # Variable for max MSE loss
+        self.max_mse_loss = -np.inf
+        self.variance_amplification = 10000
 
         # Set up the plot
-        self.use_displays = False
+        self.use_displays = True
         self.use_control = False
         if self.use_displays:
             plt.ion()
-            self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(10, 15))
+            self.fig, (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5) = plt.subplots(5, 1, figsize=(10, 25))
             self.fig.tight_layout(pad=3.0)
 
             # Initialize lines for each plot
-            self.mse_line, = self.ax1.plot([], [], 'r-')
+            # self.mse_line, = self.ax1.plot([], [], 'r-', label='Raw MSE')
+            # self.normalized_mse_line, = self.ax1.plot([], [], 'g-', label='Normalized MSE')
+            self.smoothed_mse_line, = self.ax1.plot([], [], 'b-', label='Smoothed Normalized MSE')
             self.progress_line, = self.ax2.plot([], [], 'b-')
             self.gradient_line, = self.ax3.plot([], [], 'g-')
+            self.variance_line, = self.ax5.plot([], [], 'r-')
+            self.second_derivative_line, = self.ax4.plot([], [], 'm-')
 
             # Set up the axes
             self.ax1.set_title('MSE Loss')
+            self.ax1.legend()
             self.ax2.set_title('Progress')
             self.ax3.set_title('Progress Gradient')
+            self.ax4.set_title('Progress Gradient Gradient')
+            self.ax5.set_title('Progress Gradient Variance')
 
-            for ax in (self.ax1, self.ax2, self.ax3):
+            for ax in (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5):
                 ax.set_xlim(0, 100)
                 ax.grid(True)
 
             self.ax1.set_ylim(0, 1)
             self.ax2.set_ylim(0, 1)
             self.ax3.set_ylim(-0.1, 0.1)
+            self.ax4.set_ylim(-0.1, 0.1)  # Adjust this range as needed
+            self.ax5.set_ylim(0, 10)  # Adjust this range as needed
 
 
     def process_image(self, msg):
@@ -182,10 +199,23 @@ class RobotInference(InterbotixRobotNode):
     def update_plots(self, mse_loss, progress):
         self.frame_count += 1
         self.x_data.append(self.frame_count)
-        
+
         self.mse_loss_data.append(mse_loss)
-        self.progress_data.append(progress)
         
+        # Normalize MSE loss
+        if mse_loss > self.max_mse_loss:
+            self.max_mse_loss = mse_loss
+        self.normalized_mse_loss_data = [loss / self.max_mse_loss for loss in self.mse_loss_data]
+
+        # Calculate smoothed normalized MSE loss (rolling average over 4 time steps)
+        if len(self.normalized_mse_loss_data) >= 10:
+            smoothed_mse = sum(list(self.normalized_mse_loss_data)[-10:]) / 10
+        else:
+            smoothed_mse = self.normalized_mse_loss_data[-1]
+        self.smoothed_mse_loss_data.append(smoothed_mse)
+
+        self.progress_data.append(progress)
+
         # Calculate progress gradient
         if len(self.progress_data) > 1:
             gradient = self.progress_data[-1] - self.progress_data[-2]
@@ -193,21 +223,56 @@ class RobotInference(InterbotixRobotNode):
             gradient = 0
         self.progress_gradient_data.append(gradient)
 
+        # Calculate second derivative of progress
+        if len(self.progress_gradient_data) > 1:
+            second_derivative = self.progress_gradient_data[-1] - self.progress_gradient_data[-2]
+        else:
+            second_derivative = 0
+        self.progress_second_derivative_data.append(second_derivative)
+
+        # Calculate progress gradient variance
+        if len(self.progress_gradient_data) > 1:
+            # variance = np.var(list(self.progress_gradient_data))
+            # Calculate the variance of the last 10 gradients
+            variance = np.var(list(self.progress_gradient_data)[-10:])
+        else:
+            variance = 0
+        # Amplify the variance
+        amplified_variance = self.amplify_variance(variance)
+        self.progress_gradient_variance_data.append(amplified_variance)
+
         # Ensure all data lists have the same length
-        min_length = min(len(self.x_data), len(self.mse_loss_data), len(self.progress_data), len(self.progress_gradient_data))
+        min_length = min(len(self.x_data), len(self.mse_loss_data), len(self.normalized_mse_loss_data),
+                         len(self.smoothed_mse_loss_data), len(self.progress_data), 
+                         len(self.progress_gradient_data), len(self.progress_second_derivative_data),
+                         len(self.progress_gradient_variance_data))
+        
         x_data = list(self.x_data)[-min_length:]
         mse_data = list(self.mse_loss_data)[-min_length:]
+        normalized_mse_data = list(self.normalized_mse_loss_data)[-min_length:]
+        smoothed_mse_data = list(self.smoothed_mse_loss_data)[-min_length:]
         progress_data = list(self.progress_data)[-min_length:]
         gradient_data = list(self.progress_gradient_data)[-min_length:]
+        second_derivative_data = list(self.progress_second_derivative_data)[-min_length:]
+        variance_data = list(self.progress_gradient_variance_data)[-min_length:]
+
+        # Adjust y-axis limit for variance plot if necessary
+        max_variance = max(variance_data)
+        if max_variance > self.ax5.get_ylim()[1]:
+            self.ax5.set_ylim(0, max_variance * 1.1)  # Add 10% headroom
 
         # Update the plot data
-        self.mse_line.set_data(x_data, mse_data)
+        # self.mse_line.set_data(x_data, mse_data)
+        # self.normalized_mse_line.set_data(x_data, normalized_mse_data)
+        self.smoothed_mse_line.set_data(x_data, smoothed_mse_data)
         self.progress_line.set_data(x_data, progress_data)
         self.gradient_line.set_data(x_data, gradient_data)
+        self.second_derivative_line.set_data(x_data, second_derivative_data)
+        self.variance_line.set_data(x_data, variance_data)
 
         # Adjust x-axis limit if necessary
         if self.frame_count >= 100:
-            for ax in (self.ax1, self.ax2, self.ax3):
+            for ax in (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5):
                 ax.set_xlim(self.frame_count - 99, self.frame_count)
 
         # Redraw the plot
@@ -216,6 +281,17 @@ class RobotInference(InterbotixRobotNode):
             self.fig.canvas.flush_events()
         except Exception as e:
             print(f"Error updating plot: {e}")
+
+
+    def amplify_variance(self, variance):
+        # Method 1: Simple multiplication
+        # return variance * self.variance_amplification
+
+        # Method 2: Logarithmic scaling (uncomment to use)
+        return np.log1p(variance * self.variance_amplification)
+
+        # Method 3: Square root scaling (uncomment to use)
+        # return np.sqrt(variance * self.variance_amplification)
 
 
     def display_images(self):
@@ -246,11 +322,6 @@ class RobotInference(InterbotixRobotNode):
         # Add progress text
         progress_text = f'Progress: {progress:.2f}/1.0'
         cv2.putText(combined_image, progress_text, (10, bar_top - 10), font, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-
-        # Update the plots
-        mse_loss = self.mse_loss_data[-1] if self.mse_loss_data else 0
-        progress = self.output[7]
-        self.update_plots(mse_loss, progress)
         
         cv2.imshow('Current and Predicted Images', combined_image)
         cv2.waitKey(1)
@@ -286,8 +357,15 @@ class RobotInference(InterbotixRobotNode):
 
             # Calculate MSE loss between encoded images
             mse_loss = self.loss_fn(current_image_encoded.squeeze(), next_image_encoded.squeeze())
+            # MSE loss on the raw images
+            # mse_loss = self.loss_fn(self.reshaped_images_tensor.squeeze(), self.next_image.squeeze())
             self.mse_loss_data.append(mse_loss.item())
-            pdb.set_trace()
+        
+        if self.use_displays and self.next_image is not None:
+            # Update the plots
+            mse_loss = self.mse_loss_data[-1] if self.mse_loss_data else 0
+            progress = self.output[7]
+            self.update_plots(mse_loss, self.progress)
 
         # Policy Forward Pass
         with torch.no_grad():
@@ -303,6 +381,7 @@ class RobotInference(InterbotixRobotNode):
 
         # Convert from torch, handling BFloat16
         output = output.float().cpu().numpy().squeeze()
+        self.progress = output[0][-1]
         selection_index = 4
         output = output[selection_index]
         self.output = output.tolist()
@@ -321,7 +400,7 @@ class RobotInference(InterbotixRobotNode):
                 [self.arm_joint_angles],
                 moving_time=0.4,
             )
-            self.arm_joint_angles = joints
+        self.arm_joint_angles = joints
         
     def wrist_image_callback(self, msg):
         self.wrist_image = self.process_image(msg)
