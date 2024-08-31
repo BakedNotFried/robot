@@ -71,18 +71,18 @@ class RobotInference(InterbotixRobotNode):
         torch.set_float32_matmul_precision('high')
 
         # Init Policy
-        checkpoint_path = '/home/qutrll/data/checkpoints/cnn_mlp/1/checkpoint_step_100000_seed_42.ckpt'
+        checkpoint_path = '/home/qutrll/data/checkpoints/cnn_mlp/1/checkpoint_step_150000_seed_42.ckpt'
         checkpoint = torch.load(checkpoint_path)
         self.policy = PolicyCNNMLP()
         self.policy = self.policy.to(self.device)
         self.policy.eval()
-        use_compile = True
+        use_compile = False
         if use_compile:
             self.policy = torch.compile(self.policy)
         self.policy.load_state_dict(checkpoint['model_state_dict'])
 
         # Init World Model
-        self.world_model = WorldModel(latent_dim=1024)
+        self.world_model = WorldModel(latent_dim=1024, action_dim=80)
         self.world_model = self.world_model.to(self.device)
         self.world_model.eval()
         if use_compile:
@@ -149,7 +149,8 @@ class RobotInference(InterbotixRobotNode):
         self.frame_count = 0
 
         # Set up the plot
-        self.use_displays = True
+        self.use_displays = False
+        self.use_control = False
         if self.use_displays:
             plt.ion()
             self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(10, 15))
@@ -279,17 +280,14 @@ class RobotInference(InterbotixRobotNode):
         if self.next_image is not None:
             with torch.no_grad():
                 with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    # Resize images to match VGG input size (224x224)
-                    current_image_resized = F.interpolate(self.images_tensor[:, 0], size=(224, 224), mode='bilinear', align_corners=False)
-                    # next_image_resized = F.interpolate(self.next_image, size=(224, 224), mode='bilinear', align_corners=False)
-
                     # Encode images
-                    current_image_encoded = self.encoder(current_image_resized)
-                    next_image_encoded = self.encoder(self.next_image.squeeze(1))
+                    current_image_encoded = self.encoder(self.reshaped_images_tensor.squeeze(1))
+                    next_image_encoded = self.encoder(self.next_image)
 
             # Calculate MSE loss between encoded images
-            mse_loss = self.loss_fn(current_image_encoded, next_image_encoded)
+            mse_loss = self.loss_fn(current_image_encoded.squeeze(), next_image_encoded.squeeze())
             self.mse_loss_data.append(mse_loss.item())
+            pdb.set_trace()
 
         # Policy Forward Pass
         with torch.no_grad():
@@ -305,22 +303,25 @@ class RobotInference(InterbotixRobotNode):
 
         # Convert from torch, handling BFloat16
         output = output.float().cpu().numpy().squeeze()
+        selection_index = 4
+        output = output[selection_index]
         self.output = output.tolist()
         joints = self.output[:6]
         gripper = self.output[6]
 
-        # input('Press Enter to continue...')
+        input('Press Enter to continue...')
 
         # Control Robot
         self.robot_gripper_cmd.cmd = gripper
-        self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-        control_arms(
-            [self.robot],
-            [joints],
-            [self.arm_joint_angles],
-            moving_time=0.4,
-        )
-        self.arm_joint_angles = joints
+        if self.use_control:
+            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+            control_arms(
+                [self.robot],
+                [joints],
+                [self.arm_joint_angles],
+                moving_time=0.4,
+            )
+            self.arm_joint_angles = joints
         
     def wrist_image_callback(self, msg):
         self.wrist_image = self.process_image(msg)
