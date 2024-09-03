@@ -22,6 +22,54 @@ SAVE = 2
 DISCARD = 3
 IDLE = 4
 
+class KeyboardExperimentInterface:
+    def __init__(self):
+        pygame.init()
+        self._screen = pygame.display.set_mode((400, 400))
+        self._set_color(NORMAL)
+
+        self.record_state = IDLE
+        self.prev_record_state = IDLE
+        self.lock_robot = True
+
+
+    def update(self) -> str:
+        pressed_last = self._get_pressed()
+
+        if KEY_LOCK_ROBOT in pressed_last:
+            self.lock_robot = True
+        elif KEY_UNLOCK_ROBOT in pressed_last:
+            self.lock_robot = False
+        elif KEY_IDLE in pressed_last:
+            self._set_color(NORMAL)
+            self.record_state = IDLE
+        elif KEY_START_CONTROL in pressed_last:
+            self._set_color(GREEN)
+            self.record_state = CONTROL
+        elif KEY_START_RECORDING in pressed_last:
+            self._set_color(BLUE)
+            self.record_state = RECORDING
+        elif KEY_SAVE_RECORDING in pressed_last:
+            self._set_color(PURPLE)
+            self.record_state = SAVE
+        elif KEY_DISCARD_RECORDING in pressed_last:
+            self._set_color(NORMAL)
+            self.record_state = DISCARD
+
+
+    def _get_pressed(self):
+        pressed = []
+        pygame.event.pump()
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                pressed.append(event.key)
+        return pressed
+
+
+    def _set_color(self, color):
+        self._screen.fill(color)
+        pygame.display.flip()
+
 
 class KeyboardInterface:
     def __init__(self):
