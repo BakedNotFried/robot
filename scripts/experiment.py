@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 # CNNMLP Policy + World Model
 from robot.policy3.model import PolicyCNNMLP
-from robot.policy3.world_model import WorldModel
+from robot.policy3.world_model import WorldModel as CNNWorldModel
 
 # VQ-BET Policy + World Model
 import os
@@ -21,14 +21,48 @@ from pathlib import Path
 import hydra
 from hydra import compose, initialize
 from omegaconf import OmegaConf
+import torch.nn as nn
 config_name = "train_widow"
+
+class VQWorldModel(nn.Module):
+    def __init__(self, latent_dim=256, action_dim=8):
+        super().__init__()
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim + action_dim, 512 * 7 * 7),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Unflatten(1, (512, 7, 7)),
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.2),
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.2),
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.2),
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.2),
+            nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, latents, actions):
+        b, t, n = actions.shape
+        actions = actions.reshape(b, t * n)
+        combined = torch.cat([latents.squeeze(), actions.squeeze()], dim=-1)
+        if len(combined.shape) == 1:
+            combined = combined.unsqueeze(0)
+        return self.decoder(combined)
 
 # HIT Policy + World Model
 import json
 from HIT.model_util import make_policy
 
-# LPIPS
+# Metrics
 import lpips
+from torcheval.metrics import PeakSignalNoiseRatio
 
 from robot.keyboard_interface import KeyboardExperimentInterface
 
@@ -69,58 +103,96 @@ class RobotInference(InterbotixRobotNode):
         )
         self.robot_description: mrd.ModernRoboticsDescription = getattr(mrd, "wx250s")
         self.robot_gripper_cmd = JointSingleCommand(name='gripper')
-
         self.robot_startup()
         
-        # Keyboard Interface. For lock/unlock control via a/s keys
-        # self.kb = KeyboardInterface()
+        # Keyboard Interface. For Experimental Control
+        # self.kb = KeyboardExperimentInterface()
 
-        # Set Seeds
-        seed_everything(42)
+        # Set Sys
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         assert self.device == torch.device("cuda"), "CUDA is not available"
         torch.set_float32_matmul_precision('high')
 
-        policy = "mlp"
-        if policy == "mlp":
+        # Metrics
+        self.lpips_loss_fn = lpips.LPIPS(net='alex').to(self.device)
+        self.lpips_loss_fn.eval()
+        self.psnr_score = PeakSignalNoiseRatio()
+
+        self.policy_type = "vq"
+        # CNNMLP Policy Setup
+        if self.policy_type == "mlp":
+            seed_everything(42)
             # Init Policy
-            checkpoint_path = '/home/qutrll/data/checkpoints/cnn_mlp/1/checkpoint_step_150000_seed_42.ckpt'
+            checkpoint_path = '/home/qutrll/data/checkpoints/cnn_mlp/1/checkpoint_step_100000_seed_42.ckpt'
             checkpoint = torch.load(checkpoint_path)
             self.policy = PolicyCNNMLP()
             self.policy = self.policy.to(self.device)
             self.policy.eval()
-            use_compile = False
+            use_compile = True
             if use_compile:
                 self.policy = torch.compile(self.policy)
             self.policy.load_state_dict(checkpoint['model_state_dict'])
 
             # Init World Model
-            self.world_model = WorldModel(latent_dim=1024, action_dim=80)
+            self.world_model = CNNWorldModel(latent_dim=1792, action_dim=80)
             self.world_model = self.world_model.to(self.device)
             self.world_model.eval()
             if use_compile:
                 self.world_model = torch.compile(self.world_model)
             self.world_model.load_state_dict(checkpoint['world_model_state_dict'])
-        elif policy == "vq":
-            pass
-        elif policy == "hit":
-            pass
 
-        # Init Visual Encoder
-        # weights = models.VGG19_Weights.IMAGENET1K_V1
-        # self.encoder = models.vgg19(weights=weights)
-        # self.encoder.classifier = nn.Sequential(*list(self.encoder.classifier.children())[:-1])
-        # self.encoder = self.encoder.to(self.device)
+        # VQBET Policy Setup
+        elif self.policy_type == "vq":
+            # Calculate the relative path
+            current_dir = Path('/home/qutrll/interbotix_ws/src/robot/scripts/')
+            config_path = Path('/home/qutrll/interbotix_ws/src/robot/robot/vq_bet_official/examples/configs/train_widow.yaml')
+            relative_path = os.path.relpath(config_path.parent, current_dir)
 
-        # Create MSE Loss
-        # self.loss_fn = nn.MSELoss()
+            # Initialize Hydra with the relative path
+            initialize(config_path=relative_path, version_base="1.2")
+            
+            # Load the configuration
+            cfg = compose(config_name="train_widow")
+            print(OmegaConf.to_yaml(cfg))
+
+            seed_everything(cfg.seed)
+
+            cfg.model.gpt_model.config.input_dim = 1024
+            self.cbet_model = hydra.utils.instantiate(cfg.model).to(cfg.device)
+            self.cbet_model.eval()
+            load_path = Path(cfg.save_path)
+            self.cbet_model.load_model(load_path)
+
+            # World Model Setup
+            self.world_model = VQWorldModel(latent_dim=256, action_dim=80)
+            self.world_model = self.world_model.to(cfg.device)
+            self.world_model.eval()
+            world_model_path = "/home/qutrll/data/checkpoints/vq_bet/model/4/world_model.pt"
+            self.world_model.load_state_dict(torch.load(world_model_path))
+
+        # HIT Policy Setup
+        elif self.policy_type == "hit":
+            policy_class = 'HIT'
+            config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/2/_pot_pick_place_HIT_resnet18_True/all_configs.json"
+            config = json.load(open(config_dir))
+            policy_config = config['policy_config']
+
+            seed_everything(42)
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            assert self.device == torch.device("cuda"), "CUDA is not available"
+
+            self.policy = make_policy(policy_class, policy_config)
+            self.policy.eval()
+            loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/2/_pot_pick_place_HIT_resnet18_True/policy_step_70000_seed_42.ckpt", map_location='cuda'))
+            if not loading_status:
+                print(f'Failed to load policy_last.ckpt')
+            self.policy.cuda()
 
         # Cameras Setup
         self.height = 240
         self.width = 424
         self.field_image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self.predicted_image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
         self.create_subscription(
             Image, 
             '/cam_field/camera/color/image_raw', 
@@ -138,84 +210,242 @@ class RobotInference(InterbotixRobotNode):
         # Output. Starts with arm joint angles, gripper joint, and progress
         self.output = self.arm_joint_angles + [self.gripper_joint] + [0.0]
 
-        # Preallocate tensors
+        # Preallocate tensors for images and actions
         self.images_tensor = torch.empty(1, 1, 3, self.height, self.width, dtype=torch.float32, device=self.device)
+        self.prev_images_tensor = torch.empty(1, 1, 3, 224, 224, dtype=torch.float32, device=self.device)
         self.q_pos_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
         self.next_image = None
         self.progress = None
 
         # Setup Plotting
         # Initialize deques to store data for plotting
-        self.mse_loss_data = deque(maxlen=100)
-        self.normalized_mse_loss_data = deque(maxlen=100)
-        self.smoothed_mse_loss_data = deque(maxlen=100)
+        self.lpips_data = deque(maxlen=100)
+        self.normalized_lpips_data = deque(maxlen=100)
+        self.smoothed_lpips_data = deque(maxlen=100)
+        self.psnr_data = deque(maxlen=100)
         self.progress_data = deque(maxlen=100)
         self.progress_gradient_data = deque(maxlen=100)
         self.progress_gradient_variance_data = deque(maxlen=100)
         self.progress_second_derivative_data = deque(maxlen=100)
         self.x_data = deque(maxlen=100)
         self.frame_count = 0
-        # Variable for max MSE loss
-        self.max_mse_loss = -np.inf
+        # Variable for max lpips loss
+        self.max_lpips = -np.inf
         self.variance_amplification = 10000
 
         # Set up the plot
         self.use_displays = True
-        self.use_control = False
+        self.use_control = True
         if self.use_displays:
             plt.ion()
-            self.fig, (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5) = plt.subplots(5, 1, figsize=(10, 25))
+            self.fig, (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5, self.ax6, self.ax7) = plt.subplots(7, 1, figsize=(10, 25))
             self.fig.tight_layout(pad=3.0)
 
             # Initialize lines for each plot
-            # self.mse_line, = self.ax1.plot([], [], 'r-', label='Raw MSE')
-            # self.normalized_mse_line, = self.ax1.plot([], [], 'g-', label='Normalized MSE')
-            self.smoothed_mse_line, = self.ax1.plot([], [], 'b-', label='Smoothed Normalized MSE')
-            self.progress_line, = self.ax2.plot([], [], 'b-')
-            self.gradient_line, = self.ax3.plot([], [], 'g-')
-            self.variance_line, = self.ax5.plot([], [], 'r-')
-            self.second_derivative_line, = self.ax4.plot([], [], 'm-')
+            self.lpips_line, = self.ax1.plot([], [], 'r-')
+            self.smoothed_lpips_line, = self.ax2.plot([], [], 'b-')
+            self.progress_line, = self.ax3.plot([], [], 'b-')
+            self.gradient_line, = self.ax4.plot([], [], 'g-')
+            self.second_derivative_line, = self.ax5.plot([], [], 'm-')
+            self.variance_line, = self.ax6.plot([], [], 'r-')
+            self.psnr_line, = self.ax7.plot([], [], 'b-')
 
             # Set up the axes
-            self.ax1.set_title('MSE Loss')
-            self.ax1.legend()
-            self.ax2.set_title('Progress')
-            self.ax3.set_title('Progress Gradient')
-            self.ax4.set_title('Progress Gradient Gradient')
-            self.ax5.set_title('Progress Gradient Variance')
+            self.ax1.set_title('LPIPS')
+            self.ax2.set_title('Normalised LPIPS')
+            self.ax3.set_title('Progress')
+            self.ax4.set_title('Progress Gradient')
+            self.ax5.set_title('Progress Gradient Gradient')
+            self.ax6.set_title('Progress Gradient Variance')
+            self.ax7.set_title('PSNR')
 
-            for ax in (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5):
+            for ax in (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5, self.ax6, self.ax7):
                 ax.set_xlim(0, 100)
                 ax.grid(True)
 
             self.ax1.set_ylim(0, 1)
             self.ax2.set_ylim(0, 1)
-            self.ax3.set_ylim(-0.1, 0.1)
-            self.ax4.set_ylim(-0.1, 0.1)  # Adjust this range as needed
-            self.ax5.set_ylim(0, 10)  # Adjust this range as needed
+            self.ax3.set_ylim(0, 1)
+            self.ax4.set_ylim(-0.1, 0.1)
+            self.ax5.set_ylim(-0.1, 0.1)
+            self.ax6.set_ylim(0, 10)
+            self.ax7.set_ylim(0, 100)
+        
+        self.first_run = True
+
+
+    def field_image_callback(self, msg):
+        self.field_image = self.process_image(msg)
+
+        if self.use_displays and self.next_image is not None:
+            self.display_images()
+
+        # Convert images to tensors and normalize
+        self.images_tensor[0, 0] = torch.from_numpy(self.field_image).float().permute(2, 0, 1) / 255.0
+        reshaped_tensor = self.images_tensor.squeeze(1)
+        self.reshaped_images_tensor = F.interpolate(reshaped_tensor, size=(224, 224), mode='bilinear', align_corners=False)
+        self.reshaped_images_tensor = self.reshaped_images_tensor.unsqueeze(0)
+        # Convert prev action to tensor
+        self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
+
+        if self.first_run:
+            self.first_run = False
+            self.prev_images_tensor = self.reshaped_images_tensor
+        
+        # Visual Metrics
+        if self.next_image is not None:
+            # Lpips
+            d = self.lpips_loss_fn(self.reshaped_images_tensor.squeeze(0), self.next_image)
+            self.lpips_data.append(d.item())
+
+            # PSNR
+            self.psnr_score = self.psnr_score.update(self.reshaped_images_tensor.squeeze(), self.next_image.squeeze())
+            psnr_score = self.psnr_score.compute()
+            psnr_score = psnr_score.item()
+            self.psnr_data.append(psnr_score)
+        
+        if self.use_displays and self.next_image is not None:
+            # Update the plots
+            lpips = self.lpips_data[-1] if self.lpips_data else 0
+            self.update_plots(lpips, self.progress)
+
+        # Stack the images for the next iteration
+        input_images = torch.cat([self.prev_images_tensor, self.reshaped_images_tensor], dim=1)
+
+        # Policy and World Model Steps
+        if self.policy_type == "mlp":
+            # Policy Forward Pass
+            with torch.no_grad():
+                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    output, hs = self.policy(input_images, self.q_pos_tensor)
+            
+            # World Model Forward Pass
+            with torch.no_grad():
+                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    self.next_image = self.world_model(hs, output)
+
+            # For display
+            self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
+            self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
+
+            # Convert from torch, handling BFloat16
+            output = output.float().cpu().numpy().squeeze()
+            self.progress = output[0][-1]
+            selection_index = 5
+            output = output[selection_index]
+            self.output = output.tolist()
+            joints = self.output[:6]
+            gripper = self.output[6]
+
+            input("Press Enter to continue...")
+
+            # Control Robot
+            self.robot_gripper_cmd.cmd = gripper
+            if self.use_control:
+                self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+                control_arms(
+                    [self.robot],
+                    [joints],
+                    [self.arm_joint_angles],
+                    moving_time=0.4,
+                )
+            self.arm_joint_angles = joints
+
+        elif self.policy_type == "vq":
+            # Policy Forward Pass
+            with torch.no_grad():
+                output, policy_loss, loss_dict, hs_output = self.cbet_model(input_images, self.q_pos_tensor, None, None)
+            # Forward pass through world model
+            with torch.no_grad():
+                self.next_image = self.world_model(hs_output, output)
+
+            # For display
+            self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
+            self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
+
+            # Convert from torch, handling BFloat16
+            output = output.float().cpu().numpy().squeeze()
+            self.progress = output[0][-1]
+            selection_index = 5
+            output = output[selection_index]
+            self.output = output.tolist()
+            joints = self.output[:6]
+            gripper = self.output[6]
+
+            input('Press Enter to continue...')
+
+            # Control Robot
+            self.robot_gripper_cmd.cmd = gripper
+            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+            control_arms(
+                [self.robot],
+                [joints],
+                [self.arm_joint_angles],
+                moving_time=0.4,
+            )
+            self.arm_joint_angles = joints
+
+        elif self.policy_type == "hit":
+            # Policy Forward Pass
+            with torch.no_grad():
+                output, hs_img = self.policy.forward_inf(self.q_pos_tensor, self.reshaped_images_tensor)
+
+            # World Model Forward Pass
+            with torch.no_grad():
+                self.next_image = self.policy.forward_world_model(hs_img, output)
+
+            # For display
+            self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
+            self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
+
+            # Convert from torch, handling BFloat16
+            output = output.float().cpu().numpy().squeeze()
+            selection_index = 4
+            output = output[selection_index]
+            self.output = output.tolist()
+            joints = self.output[:6]
+            gripper = self.output[6]
+
+            input('Press Enter to continue...')
+
+            # Control Robot
+            self.robot_gripper_cmd.cmd = gripper
+            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+            control_arms(
+                [self.robot],
+                [joints],
+                [self.arm_joint_angles],
+                moving_time=0.4,
+            )
+            self.arm_joint_angles = joints
+        
+        # Update the previous images tensor
+        self.prev_images_tensor = self.reshaped_images_tensor
+
+
 
 
     def process_image(self, msg):
         return np.array(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
     
 
-    def update_plots(self, mse_loss, progress):
+    def update_plots(self, lpips, progress):
         self.frame_count += 1
         self.x_data.append(self.frame_count)
 
-        self.mse_loss_data.append(mse_loss)
+        self.lpips_data.append(lpips)
         
-        # Normalize MSE loss
-        if mse_loss > self.max_mse_loss:
-            self.max_mse_loss = mse_loss
-        self.normalized_mse_loss_data = [loss / self.max_mse_loss for loss in self.mse_loss_data]
+        # Normalize lpips loss
+        if lpips > self.max_lpips:
+            self.max_lpips = lpips
+        self.normalized_lpips_data = [loss / self.max_lpips for loss in self.lpips_data]
 
-        # Calculate smoothed normalized MSE loss (rolling average over 4 time steps)
-        if len(self.normalized_mse_loss_data) >= 10:
-            smoothed_mse = sum(list(self.normalized_mse_loss_data)[-10:]) / 10
+        # Calculate smoothed normalized lpips loss (rolling average over 4 time steps)
+        if len(self.normalized_lpips_data) >= 10:
+            smoothed_lpips = sum(list(self.normalized_lpips_data)[-10:]) / 10
         else:
-            smoothed_mse = self.normalized_mse_loss_data[-1]
-        self.smoothed_mse_loss_data.append(smoothed_mse)
+            smoothed_lpips = self.normalized_lpips_data[-1]
+        self.smoothed_lpips_data.append(smoothed_lpips)
 
         self.progress_data.append(progress)
 
@@ -245,19 +475,20 @@ class RobotInference(InterbotixRobotNode):
         self.progress_gradient_variance_data.append(amplified_variance)
 
         # Ensure all data lists have the same length
-        min_length = min(len(self.x_data), len(self.mse_loss_data), len(self.normalized_mse_loss_data),
-                         len(self.smoothed_mse_loss_data), len(self.progress_data), 
+        min_length = min(len(self.x_data), len(self.lpips_data), len(self.normalized_lpips_data),
+                         len(self.smoothed_lpips_data), len(self.progress_data), 
                          len(self.progress_gradient_data), len(self.progress_second_derivative_data),
-                         len(self.progress_gradient_variance_data))
+                         len(self.progress_gradient_variance_data), len(self.psnr_data))
         
         x_data = list(self.x_data)[-min_length:]
-        mse_data = list(self.mse_loss_data)[-min_length:]
-        normalized_mse_data = list(self.normalized_mse_loss_data)[-min_length:]
-        smoothed_mse_data = list(self.smoothed_mse_loss_data)[-min_length:]
+        lpips_data = list(self.lpips_data)[-min_length:]
+        normalized_lpips_data = list(self.normalized_lpips_data)[-min_length:]
+        smoothed_lpips_data = list(self.smoothed_lpips_data)[-min_length:]
         progress_data = list(self.progress_data)[-min_length:]
         gradient_data = list(self.progress_gradient_data)[-min_length:]
         second_derivative_data = list(self.progress_second_derivative_data)[-min_length:]
         variance_data = list(self.progress_gradient_variance_data)[-min_length:]
+        psnr_data = list(self.psnr_data)[-min_length]
 
         # Adjust y-axis limit for variance plot if necessary
         max_variance = max(variance_data)
@@ -265,17 +496,17 @@ class RobotInference(InterbotixRobotNode):
             self.ax5.set_ylim(0, max_variance * 1.1)  # Add 10% headroom
 
         # Update the plot data
-        # self.mse_line.set_data(x_data, mse_data)
-        # self.normalized_mse_line.set_data(x_data, normalized_mse_data)
-        self.smoothed_mse_line.set_data(x_data, smoothed_mse_data)
+        self.lpips_line.set_data(x_data, lpips_data)
+        self.smoothed_lpips_line.set_data(x_data, smoothed_lpips_data)
         self.progress_line.set_data(x_data, progress_data)
         self.gradient_line.set_data(x_data, gradient_data)
         self.second_derivative_line.set_data(x_data, second_derivative_data)
         self.variance_line.set_data(x_data, variance_data)
+        self.psnr_line.set_data(x_data, psnr_data)
 
         # Adjust x-axis limit if necessary
         if self.frame_count >= 100:
-            for ax in (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5):
+            for ax in (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5, self.ax6, self.ax7):
                 ax.set_xlim(self.frame_count - 99, self.frame_count)
 
         # Redraw the plot
@@ -329,72 +560,6 @@ class RobotInference(InterbotixRobotNode):
         cv2.imshow('Current and Predicted Images', combined_image)
         cv2.waitKey(1)
 
-
-    def field_image_callback(self, msg):
-        self.field_image = self.process_image(msg)
-
-        if self.use_displays and self.next_image is not None:
-            self.display_images()
-
-        # Convert images to tensors and normalize
-        self.images_tensor[0, 0] = torch.from_numpy(self.field_image).float().permute(2, 0, 1) / 255.0
-        reshaped_tensor = self.images_tensor.squeeze(1)
-        self.reshaped_images_tensor = F.interpolate(reshaped_tensor, size=(224, 224), mode='bilinear', align_corners=False)
-        self.reshaped_images_tensor = self.reshaped_images_tensor.unsqueeze(0)
-        # Convert prev action to tensor
-        self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
-
-        # LPIPS Calculation
-        if self.next_image is not None:
-            with torch.no_grad():
-                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    # Encode images
-                    current_image_encoded = self.encoder(self.reshaped_images_tensor.squeeze(1))
-                    next_image_encoded = self.encoder(self.next_image)
-
-            # Calculate MSE loss between encoded images
-            mse_loss = self.loss_fn(current_image_encoded.squeeze(), next_image_encoded.squeeze())
-            # MSE loss on the raw images
-            # mse_loss = self.loss_fn(self.reshaped_images_tensor.squeeze(), self.next_image.squeeze())
-            self.mse_loss_data.append(mse_loss.item())
-        
-        if self.use_displays and self.next_image is not None:
-            # Update the plots
-            mse_loss = self.mse_loss_data[-1] if self.mse_loss_data else 0
-            self.update_plots(mse_loss, self.progress)
-
-        # Policy Forward Pass
-        with torch.no_grad():
-            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                output, hs = self.policy(self.images_tensor, self.q_pos_tensor)
-
-        # World Model Forward Pass
-        with torch.no_grad():
-            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                self.next_image = self.world_model(hs, output)
-        self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
-        self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
-
-        # Convert from torch, handling BFloat16
-        output = output.float().cpu().numpy().squeeze()
-        self.progress = output[0][-1]
-        selection_index = 4
-        output = output[selection_index]
-        self.output = output.tolist()
-        joints = self.output[:6]
-        gripper = self.output[6]
-
-        # Control Robot
-        self.robot_gripper_cmd.cmd = gripper
-        if self.use_control:
-            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-            control_arms(
-                [self.robot],
-                [joints],
-                [self.arm_joint_angles],
-                moving_time=0.4,
-            )
-        self.arm_joint_angles = joints
         
     def robot_startup(self):
         """Move robot arm to start demonstration pose"""
@@ -416,6 +581,7 @@ class RobotInference(InterbotixRobotNode):
     def __del__(self):
         plt.close(self.fig)
 
+# Get args
 def main(args=None):
     rclpy.init(args=args)
     

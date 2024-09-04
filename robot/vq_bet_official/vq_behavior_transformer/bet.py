@@ -95,6 +95,11 @@ class BehaviorTransformer(nn.Module):
                 in_channels=7,
                 hidden_channels=[512],
             )
+            # For reducing 2 image features to 512
+            self.feature_reduce = MLP(
+                in_channels=1024,
+                hidden_channels=[512],
+            )
 
         self._collected_actions = []
         self._have_fit_kmeans = False
@@ -115,22 +120,16 @@ class BehaviorTransformer(nn.Module):
         # ])
 
     def _process_images(self, images):
-        # images shape: [B, 1, 3, 240, 424]
+        # images shape: [B, T, 3, 240, 424]
         B, T, C, H, W = images.shape
         images = images.view(B*T, C, H, W)
         
-        # # Resize images to 224x224 if needed
-        # if H != 224 or W != 224:
-        #     images = F.interpolate(images, size=(224, 224), mode='bilinear', align_corners=False)
-        
-        # # Normalize images
-        # images = self.transform(images / 255.0)
-        
         # Pass through ResNet
         features = self.resnet(images)
-        features = features.view(features.size(0), -1)  # Flatten
+        # view as [B, T*512]
+        features = features.view(B, T*512)
         features = features.unsqueeze(1)
-        
+        features = self.feature_reduce(features)
         return features
     
     def forward(

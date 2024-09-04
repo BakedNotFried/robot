@@ -62,10 +62,13 @@ def launch_setup(context, *args, **kwargs):
 
     # Realsense Cameras
     rs_actions = []
+    # camera_names = [
+    #     LaunchConfiguration('cam_overhead_name'),
+    #     LaunchConfiguration('cam_field_name'),
+    #     LaunchConfiguration('cam_wrist_name'),
+    # ]
     camera_names = [
-        LaunchConfiguration('cam_overhead_name'),
-        LaunchConfiguration('cam_field_name'),
-        LaunchConfiguration('cam_wrist_name'),
+        LaunchConfiguration('cam_field_name')
     ]
     camera_yaml_mapping = {
         'cam_overhead': 'rs_cam_overhead.yaml',

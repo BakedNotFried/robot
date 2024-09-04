@@ -1,0 +1,44 @@
+env_vars:
+  dataset_path: /home/qutrll/vq_bet_official/vqbet_datasets_for_release
+  save_path: /home/qutrll/vq_bet_official
+  wandb_entity: YOUR_WANDB_ENTITY
+  datasets:
+    ant: ${env_vars.dataset_path}/ant
+    relay_kitchen: ${env_vars.dataset_path}/relay_kitchen
+    pusht: ${env_vars.dataset_path}/pusht
+    ur3: ${env_vars.dataset_path}/ur3
+seed: 42
+window_size: 1
+goal_window_size: 1
+eval_window_size: 1
+batch_size: 32
+epochs: 10
+eval_freq: 10
+eval_on_env_freq: 25
+num_env_evals: 5
+num_final_evals: 20
+num_final_eval_per_goal: 5
+action_window_size: 10
+wandb:
+  project: vq-bet
+  entity: ${env_vars.wandb_entity}
+device: cuda
+optim:
+  lr: 0.0003
+  weight_decay: 0.0002
+  betas:
+  - 0.9
+  - 0.999
+save_every: 10
+save_path: /home/qutrll/data/checkpoints/vq_bet/vae/4
+load_path: null
+vqvae_model:
+  _target_: vqvae.VqVae
+  input_dim_h: 10
+  input_dim_w: 8
+  n_latent_dims: 512
+  vqvae_n_embed: 16
+  vqvae_groups: 2
+  eval: false
+  device: ${device}
+  encoder_loss_multiplier: 1

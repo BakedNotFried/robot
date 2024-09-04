@@ -27,12 +27,12 @@ optim:
 
 
 save_every: 10
-save_path: "/home/qutrll/data/checkpoints/vq_bet/vae/3"
+save_path: "/home/qutrll/data/checkpoints/vq_bet/vae/4"
 load_path: null
 
 vqvae_model:
   _target_: vqvae.VqVae
-  input_dim_h: 1
+  input_dim_h: 10
   input_dim_w: 8
   n_latent_dims: 512
   vqvae_n_embed: 16

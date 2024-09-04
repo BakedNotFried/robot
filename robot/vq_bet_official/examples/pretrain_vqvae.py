@@ -9,7 +9,7 @@ import tqdm
 from omegaconf import OmegaConf
 from vqvae.vqvae import *
 
-from vq_bet_official.examples.dataloader import DataLoaderLite
+from vq_bet_official.examples.dataloader_wm import DataLoaderLite
 
 import pdb
 
@@ -37,6 +37,7 @@ def main(cfg):
     dataset_dir = '/home/qutrll/data/pot_pick_place_2_10hz'
     episodes = os.listdir(dataset_dir)
     num_episodes = len(episodes)
+    # num_episodes = 1
     train_episodes = int(num_episodes)
     train_indices = np.random.choice(num_episodes, size=train_episodes, replace=False)
     train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 32, 10, 'train', train_indices)
@@ -47,16 +48,18 @@ def main(cfg):
     num_steps = 50000
     for _ in tqdm.trange(num_steps):
 
-        act, _, _, _, next_progress = train_loader.next_batch()
-        act = act.to(device)
+        action, _, _, next_progress, _ = train_loader.next_batch()
+        action = action.to(device)
         next_progress = next_progress.to(device)
-        action = torch.cat((act, next_progress), dim=-1)
+        action = torch.cat((action, next_progress), dim=2)
+
         (
             encoder_loss,
             vq_loss_state,
             vq_code,
             vqvae_recon_loss,
         ) = vqvae_model.vqvae_update(action)  # N T D
+
 
     state_dict = vqvae_model.state_dict()
     torch.save(state_dict, os.path.join(save_path, "trained_vqvae.pt"))

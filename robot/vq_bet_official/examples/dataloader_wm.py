@@ -3,6 +3,7 @@ import h5py
 import numpy as np
 import torch
 import torch.nn.functional as F
+import pdb
 
 class DataLoaderLite:
     def __init__(self, data_dir, B, T, split, indices):
@@ -22,9 +23,7 @@ class DataLoaderLite:
         # Load all episodes into memory
         self.actions = []
         self.q_pos = []
-        # self.oh_images = []
         self.field_images = []
-        # self.wrist_images = []
         self.progress = []
         
         for file_path in self.episode_files:
@@ -32,9 +31,7 @@ class DataLoaderLite:
                 data = self.extract_data_from_hdf5(file, keys)
                 self.actions.append(data[0])
                 self.q_pos.append(data[1])
-                # self.oh_images.append(data[2])
                 self.field_images.append(data[3])
-                # self.wrist_images.append(data[4])
                 self.progress.append(data[5])
     
     def extract_data_from_hdf5(self, file, keys):
@@ -67,14 +64,13 @@ class DataLoaderLite:
             max_start = max(0, episode_length - T - 1)
             start = np.random.randint(0, max_start)
             
-            action = self.actions[i][start+T].squeeze()
+            action = self.actions[i][start+1:start+T+1]
             q_pos = self.q_pos[i][start].squeeze()
-            # oh_images = self.oh_images[i][start].unsqueeze(0)
-            field_images = self.field_images[i][start].unsqueeze(0)
-            # wrist_images = self.wrist_images[i][start].unsqueeze(0)
-            # images = torch.cat([oh_images, field_images, wrist_images], dim=0)
-            images = torch.cat([field_images], dim=0)
-            progress = self.progress[i][start+T].unsqueeze(0)
+            current_field_images = self.field_images[i][start]
+            # Using previous image. Based on tuned action selection of t=5
+            previous_field_images = self.field_images[i][start - 5]
+            images = torch.stack([previous_field_images, current_field_images], dim=0)
+            next_progress = self.progress[i][start+1:start+T+1].unsqueeze(-1)
             
             # Target for WorldModel. Overhead image at start + T
             next_images = self.field_images[i][start+T].unsqueeze(0)
@@ -82,7 +78,7 @@ class DataLoaderLite:
             batch_action.append(action)
             batch_q_pos.append(q_pos)
             batch_images.append(images)
-            batch_next_progress.append(progress)
+            batch_next_progress.append(next_progress)
             batch_next_images.append(next_images)
         
         # Stack the batches

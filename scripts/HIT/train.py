@@ -37,6 +37,9 @@ def train_bc(train_dataloader, val_dataloader, config):
     seed_everything(42)
 
     policy = make_policy(policy_class, policy_config)
+    # use_compile = True
+    # if use_compile:
+    #     torch.compile(policy)
 
     if config['load_pretrain']:
         loading_status = policy.deserialize(torch.load(f'{config["pretrained_path"]}/policy_last.ckpt', map_location='cuda'))
@@ -45,6 +48,8 @@ def train_bc(train_dataloader, val_dataloader, config):
         loading_status = policy.deserialize(torch.load(config['resume_ckpt_path']))
         print(f'Resume policy from: {config["resume_ckpt_path"]}, Status: {loading_status}')
     policy.cuda()
+    policy.train()
+
     optimizer = make_optimizer(policy_class, policy)
     if config['load_pretrain']:
         optimizer.load_state_dict(torch.load(f'{config["pretrained_path"]}/optimizer_last.ckpt', map_location='cuda'))
@@ -58,43 +63,14 @@ def train_bc(train_dataloader, val_dataloader, config):
     dataset_dir = '/home/qutrll/data/pot_pick_place_2_10hz'
     episodes = os.listdir(dataset_dir)
     num_episodes = len(episodes)
+    # num_episodes = 1
     train_episodes = int(num_episodes)
     train_indices = np.random.choice(num_episodes, size=train_episodes, replace=False)
-    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 32, 10, 'train', train_indices)
+    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 8, 10, 'train', train_indices)
     data = [None, None, None, None]
-    
-    # train_dataloader = repeater(train_dataloader)
+
     for step in tqdm(range(num_steps+1)):
-        # if step % validate_every == 0:
-        #     print('validating')
-
-        #     with torch.inference_mode():
-        #         policy.eval()
-        #         validation_dicts = []
-        #         for batch_idx, data in enumerate(val_dataloader):
-        #             forward_dict = forward_pass(data, policy)
-        #             validation_dicts.append(forward_dict)
-        #             if batch_idx > 50:
-        #                 break
-
-        #         validation_summary = compute_dict_mean(validation_dicts)
-
-        #         epoch_val_loss = validation_summary['loss']
-        #         if epoch_val_loss < min_val_loss:
-        #             min_val_loss = epoch_val_loss
-        #             best_ckpt_info = (step, min_val_loss, deepcopy(policy.serialize()))
-        #     for k in list(validation_summary.keys()):
-        #         validation_summary[f'val_{k}'] = validation_summary.pop(k)     
-        #     if config['wandb']:       
-        #         wandb.log(validation_summary, step=step)
-        #     print(f'Val loss:   {epoch_val_loss:.5f}')
-        #     summary_string = ''
-        #     for k, v in validation_summary.items():
-        #         summary_string += f'{k}: {v.item():.3f} '
-        #     print(summary_string)
-                
         # training
-        policy.train()
         optimizer.zero_grad()
         world_model_optimizer.zero_grad()
 
@@ -124,10 +100,6 @@ def train_bc(train_dataloader, val_dataloader, config):
         world_model_loss.backward()
         world_model_optimizer.step()
 
-
-        # if config['wandb']:
-        #     wandb.log(forward_dict, step=step) # not great, make training 1-2% slower
-
         # Save
         if (step > save_every) and (step % save_every) == 0:
             ckpt_path = os.path.join(ckpt_dir, f'policy_step_{step}_seed_{seed}.ckpt')
@@ -139,33 +111,7 @@ def train_bc(train_dataloader, val_dataloader, config):
                 'policy_optimizer': optimizer.state_dict(),
                 'world_model_optimizer': world_model_optimizer.state_dict()
             }, optimizer_ckpt_path)
-        # if (step > save_every) and (step % save_every) == 0:
-        #     ckpt_path = os.path.join(ckpt_dir, f'policy_step_{step}_seed_{seed}.ckpt')
-        #     torch.save(policy.serialize(), ckpt_path)
-        #     #save optimizer state
-        #     optimizer_ckpt_path = os.path.join(ckpt_dir, f'optimizer_step_{step}_seed_{seed}.ckpt')
-        #     torch.save(optimizer.state_dict(), optimizer_ckpt_path)
 
-        # if step % 2000 == 0:
-        #     ckpt_path = os.path.join(ckpt_dir, f'policy_last.ckpt')
-        #     torch.save(policy.serialize(), ckpt_path)
-        #     optimizer_ckpt_path = os.path.join(ckpt_dir, f'optimizer_last.ckpt')
-        #     torch.save(optimizer.state_dict(), optimizer_ckpt_path)
-            
-    # ckpt_path = os.path.join(ckpt_dir, f'policy_last.ckpt')
-    # torch.save(policy.serialize(), ckpt_path)
-    # optimizer_ckpt_path = os.path.join(ckpt_dir, f'optimizer_last.ckpt')
-    # torch.save(optimizer.state_dict(), optimizer_ckpt_path)
-
-    # return best_ckpt_info
-
-def repeater(data_loader):
-    epoch = 0
-    for loader in repeat(data_loader):
-        for data in loader:
-            yield data
-        print(f'Epoch {epoch} done')
-        epoch += 1
 
 def main_train(args):
     # command line parameters
@@ -185,9 +131,6 @@ def main_train(args):
     same_backbones = args['same_backbones']
     
     ckpt_dir = f'{ckpt_dir}_{task_name}_{policy_class}_{backbone}_{same_backbones}'
-    # if os.path.isdir(ckpt_dir):
-    #     print(f'ckpt_dir {ckpt_dir} already exists, exiting')
-    #     return
     args['ckpt_dir'] = ckpt_dir 
     # get task parameters
     is_sim = task_name[:4] == 'sim_'
@@ -300,7 +243,7 @@ def main_train(args):
         'randomize_data': args['randomize_data'],
     }
     all_configs = {**config, **args, "task_config": task_config}
-    
+
     if args['width'] < 0:
         args['width'] = None
     if args['height'] < 0:
@@ -319,39 +262,7 @@ def main_train(args):
     with open(all_config_path, 'w') as fp:
         json.dump(all_configs, fp, indent=4)
 
-    # train_dataloader, val_dataloader, stats, _ = load_data(dataset_dir, name_filter, camera_names, 
-    #                                                        batch_size_train, batch_size_val, args['chunk_size'], 
-    #                                                        args['skip_mirrored_data'], config['load_pretrain'], 
-    #                                                        policy_class, stats_dir_l=stats_dir, 
-    #                                                        sample_weights=sample_weights, 
-    #                                                        train_ratio=train_ratio,
-    #                                                        width=args['width'],
-    #                                                        height=args['height'],
-    #                                                        normalize_resnet=args['normalize_resnet'],
-    #                                                        data_aug=args['data_aug'],
-    #                                                        observation_name=task_config['observation_name'],
-    #                                                        feature_loss = args['feature_loss_weight'] > 0,
-    #                                                        grayscale = args['grayscale'],
-    #                                                        randomize_color = args['randomize_color'],
-    #                                                         randomize_data_degree = args['randomize_data_degree'],
-    #                                                         randomize_data = args['randomize_data'],
-    #                                                         randomize_index = randomize_index,  
-    #                                                        )
-    
-    # # save dataset stats
-    # stats_path = os.path.join(ckpt_dir, f'dataset_stats.pkl')
-    # with open(stats_path, 'wb') as f:
-    #     pickle.dump(stats, f)
-
     train_bc(None, None, config)
-    # best_step, min_val_loss, best_state_dict = best_ckpt_info
-
-    # save best checkpoint
-    # ckpt_path = os.path.join(ckpt_dir, f'policy_best.ckpt')
-    # torch.save(best_state_dict, ckpt_path)
-    # print(f'Best ckpt, val loss {min_val_loss:.6f} @ step{best_step}')
-    # if args['wandb']:
-    #     wandb.finish()
 
 
 if __name__ == '__main__':
@@ -420,8 +331,7 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     torch.cuda.set_device(args.gpu_id)
-    # PROJECT_NAME = 'H1'
-    # WANDB_USERNAME = "WANDB_USERNAME"
+
     main_train(vars(args))
     
  

@@ -42,6 +42,8 @@ class WorldModel(nn.Module):
         )
 
     def forward(self, latents, actions):
+        b, t, n = actions.shape
+        actions = actions.reshape(b, t * n)
         combined = torch.cat([latents.squeeze(), actions.squeeze()], dim=-1)
         if len(combined.shape) == 1:
             combined = combined.unsqueeze(0)
@@ -71,8 +73,9 @@ def main(cfg):
     )
 
     # Instantiate the world Model
-    world_model = WorldModel()
+    world_model = WorldModel(latent_dim=256, action_dim=80)
     world_model = world_model.to(cfg.device)
+    world_model.train()
 
     # Create optimizer for world model
     optimizer_world_model = torch.optim.Adam(world_model.parameters(), lr=3e-4)
@@ -84,15 +87,15 @@ def main(cfg):
     dataset_dir = '/home/qutrll/data/pot_pick_place_2_10hz'
     episodes = os.listdir(dataset_dir)
     num_episodes = len(episodes)
+    # num_episodes = 1
     train_episodes = int(num_episodes)
     train_indices = np.random.choice(num_episodes, size=train_episodes, replace=False)
-    action_selection = 1
-    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 8, action_selection, 'train', train_indices)
+    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 8, 10, 'train', train_indices)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     assert device.type == "cuda", "CUDA is not available"
 
-    num_steps = 200000
+    num_steps = 150001
     for step in tqdm.trange(num_steps):
         # Zero out gradients
         optimizer["optimizer1"].zero_grad()
@@ -101,11 +104,9 @@ def main(cfg):
 
         # Load Data
         action, q_pos, images, next_progress, next_images = train_loader.next_batch()
-        action = action.unsqueeze(1)
         action = action.to(device)
         q_pos = q_pos.to(device)
         images = images.to(device)
-        next_progress = next_progress.unsqueeze(1)
         next_progress = next_progress.to(device)
         next_images = next_images.to(device)
         action = torch.cat([action, next_progress], dim=2)

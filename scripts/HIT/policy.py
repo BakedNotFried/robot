@@ -24,7 +24,7 @@ class HITPolicy(nn.Module):
             self.action_idx = None
         
         # Create the world model
-        self.world_model = WorldModel(latent_dim=512 * 49, action_dim=8 * 10)
+        self.world_model = WorldModel(latent_dim=512 * 98, action_dim=8 * 10)
     
     def __call__(self, qpos, image, actions=None, next_image=None):
         if self.state_idx is not None:

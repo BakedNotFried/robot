@@ -14,7 +14,7 @@ TASK_CONFIGS = {
 
     'pot_pick_place':{
     'dataset_dir': DATA_DIR + '/pot_pick_place',
-    'camera_names': ['cam_field'],
+    'camera_names': ['cam_field_prev','cam_field'],
     'observation_name': ['qpos'],
     'state_dim':7,
     'action_dim':8,

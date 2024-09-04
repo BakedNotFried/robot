@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torchvision import models
+import pdb
 
 class PolicyCNNMLP(nn.Module):
     def __init__(self, seq_len=10):
@@ -14,7 +15,7 @@ class PolicyCNNMLP(nn.Module):
         
         # Define the MLP
         self.mlp = nn.Sequential(
-            nn.Linear(1024, 512),
+            nn.Linear(1792, 512),
             # nn.Linear(2312, 512),
             nn.ReLU(),
             nn.Dropout(0.2),

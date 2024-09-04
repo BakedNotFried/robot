@@ -13,9 +13,9 @@ eval_on_env_freq: 20
 num_env_evals: 20
 num_final_evals: 20
 num_final_eval_per_goal: 5
-action_window_size: 1
+action_window_size: 10
 sequentially_select: false
-vqvae_load_dir: "/home/qutrll/data/checkpoints/vq_bet/vae/3/trained_vqvae.pt"
+vqvae_load_dir: "/home/qutrll/data/checkpoints/vq_bet/vae/4/trained_vqvae.pt"
 goal_dim: 0
 visual_input: true # true: image-based policy, false: state-based policy
 
@@ -26,7 +26,7 @@ optim:
   betas: [0.9, 0.999]
 
 save_every: 10
-save_path: "/home/qutrll/data/checkpoints/vq_bet/model/3"
+save_path: "/home/qutrll/data/checkpoints/vq_bet/model/4"
 load_path: null
 
 model:
@@ -42,10 +42,10 @@ model:
     config:
       _target_: vq_behavior_transformer.GPTConfig
       block_size: 110
-      input_dim: 1
-      n_layer: 6
-      n_head: 6
-      n_embd: 120
+      input_dim: 1024
+      n_layer: 16
+      n_head: 16
+      n_embd: 256
   vqvae_model:
     _target_: vqvae.VqVae
     input_dim_h: ${action_window_size}
