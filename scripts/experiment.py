@@ -60,6 +60,9 @@ class VQWorldModel(nn.Module):
 import json
 from HIT.model_util import make_policy
 
+# Diffusion World Model
+from denoising_diffusion_pytorch import Unet, GaussianDiffusion
+
 # Metrics
 import lpips
 from torcheval.metrics import PeakSignalNoiseRatio
@@ -118,7 +121,10 @@ class RobotInference(InterbotixRobotNode):
         self.lpips_loss_fn.eval()
         self.psnr_score = PeakSignalNoiseRatio()
 
-        self.policy_type = "vq"
+        # mlp, vq, hit
+        self.policy_type = "hit"
+        # dm or simp
+        self.world_model_type = "dm"
         # CNNMLP Policy Setup
         if self.policy_type == "mlp":
             seed_everything(42)
@@ -173,7 +179,7 @@ class RobotInference(InterbotixRobotNode):
         # HIT Policy Setup
         elif self.policy_type == "hit":
             policy_class = 'HIT'
-            config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/2/_pot_pick_place_HIT_resnet18_True/all_configs.json"
+            config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/all_configs.json"
             config = json.load(open(config_dir))
             policy_config = config['policy_config']
 
@@ -183,10 +189,49 @@ class RobotInference(InterbotixRobotNode):
 
             self.policy = make_policy(policy_class, policy_config)
             self.policy.eval()
-            loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/2/_pot_pick_place_HIT_resnet18_True/policy_step_70000_seed_42.ckpt", map_location='cuda'))
+            loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_100000_seed_42.ckpt", map_location='cuda'))
             if not loading_status:
                 print(f'Failed to load policy_last.ckpt')
             self.policy.cuda()
+        
+        # Diffusion World Model Setup
+        if self.world_model_type == "dm":
+            with open("/home/qutrll/denoising-diffusion-pytorch/examples/action_stats.json", 'r') as f:
+                stats = json.load(f)
+            action_mean = torch.tensor(stats['mean']).to(self.device)
+            action_std = torch.tensor(stats['std']).to(self.device)
+            action_min = torch.tensor(stats['min']).to(self.device)
+            action_max = torch.tensor(stats['max']).to(self.device)
+            del stats
+            self.normalize_actions = lambda x: (x - action_mean) / action_std
+            self.scale_actions = lambda x: (x - action_min) * (1.0 - (-1.0)) / (action_max - action_min) + (-1.0)
+
+            # Create Unet
+            self.world_model = Unet(
+                dim = 64,
+                dim_mults = (1, 2, 4, 8),
+                channels=3,
+                flash_attn = True
+            )
+            self.world_model = self.world_model.to(self.device)
+            use_compile = True
+            if use_compile:
+                self.world_model = torch.compile(self.world_model)
+            
+            # Create Diffusion based World Model
+            self.diffusion_world_model = GaussianDiffusion(
+                self.world_model,
+                self.device,
+                image_size = 224,
+                timesteps = 100
+            )
+            self.diffusion_world_model = self.diffusion_world_model.to(self.device)
+
+            # Load checkpoints
+            checkpoint_dir = "/home/qutrll/data/checkpoints/diffusion_wm/3/checkpoint_step_80004_seed_42.ckpt"
+            checkpoint = torch.load(checkpoint_dir)
+            self.world_model.load_state_dict(checkpoint['world_model'])
+            self.world_model.eval()
 
         # Cameras Setup
         self.height = 240
@@ -214,6 +259,7 @@ class RobotInference(InterbotixRobotNode):
         self.images_tensor = torch.empty(1, 1, 3, self.height, self.width, dtype=torch.float32, device=self.device)
         self.prev_images_tensor = torch.empty(1, 1, 3, 224, 224, dtype=torch.float32, device=self.device)
         self.q_pos_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
+        self.action_tensor = torch.empty(1, 8, dtype=torch.float32, device=self.device)
         self.next_image = None
         self.progress = None
 
@@ -330,12 +376,13 @@ class RobotInference(InterbotixRobotNode):
 
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
-            self.progress = output[0][-1]
             selection_index = 5
             output = output[selection_index]
             self.output = output.tolist()
             joints = self.output[:6]
             gripper = self.output[6]
+            self.progress = output[0][-1]
+
 
             input("Press Enter to continue...")
 
@@ -365,12 +412,12 @@ class RobotInference(InterbotixRobotNode):
 
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
-            self.progress = output[0][-1]
             selection_index = 5
             output = output[selection_index]
             self.output = output.tolist()
             joints = self.output[:6]
             gripper = self.output[6]
+            self.progress = self.output[-1]
 
             input('Press Enter to continue...')
 
@@ -388,11 +435,22 @@ class RobotInference(InterbotixRobotNode):
         elif self.policy_type == "hit":
             # Policy Forward Pass
             with torch.no_grad():
-                output, hs_img = self.policy.forward_inf(self.q_pos_tensor, self.reshaped_images_tensor)
+                output, hs_img = self.policy.forward_inf(self.q_pos_tensor, input_images)
 
-            # World Model Forward Pass
-            with torch.no_grad():
-                self.next_image = self.policy.forward_world_model(hs_img, output)
+            # # World Model Forward Pass
+            # with torch.no_grad():
+            #     self.next_image = self.policy.forward_world_model(hs_img, output)
+
+            # # For display
+            # self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
+            # self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
+
+            if self.world_model_type == "dm":
+                self.action_tensor[0, 0:-1] = self.normalize_actions(output[:,5,0:-1])
+                self.action_tensor[0, 0:-1] = self.scale_actions(self.action_tensor[0, 0:-1])
+                self.action_tensor[0, -1] = output[:,5,-1]
+                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    self.next_image = self.diffusion_world_model.sample(input_images, self.action_tensor, batch_size=1)
 
             # For display
             self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
@@ -400,11 +458,12 @@ class RobotInference(InterbotixRobotNode):
 
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
-            selection_index = 4
+            selection_index = 5
             output = output[selection_index]
             self.output = output.tolist()
             joints = self.output[:6]
             gripper = self.output[6]
+            self.progress = self.output[-1]
 
             input('Press Enter to continue...')
 

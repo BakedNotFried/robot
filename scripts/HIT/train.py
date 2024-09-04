@@ -55,7 +55,7 @@ def train_bc(train_dataloader, val_dataloader, config):
         optimizer.load_state_dict(torch.load(f'{config["pretrained_path"]}/optimizer_last.ckpt', map_location='cuda'))
     
     # optimizer for the world model
-    world_model_optimizer = torch.optim.AdamW(policy.world_model.parameters(), lr=3e-5)
+    # world_model_optimizer = torch.optim.AdamW(policy.world_model.parameters(), lr=3e-5)
 
     # Dataloader
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -72,7 +72,7 @@ def train_bc(train_dataloader, val_dataloader, config):
     for step in tqdm(range(num_steps+1)):
         # training
         optimizer.zero_grad()
-        world_model_optimizer.zero_grad()
+        # world_model_optimizer.zero_grad()
 
         action, q_pos, images, next_progress, next_images = train_loader.next_batch()
         action = action.to(device)
@@ -95,10 +95,10 @@ def train_bc(train_dataloader, val_dataloader, config):
         policy_loss.backward()
         optimizer.step()
 
-        # backward for World Model
-        world_model_loss = forward_dict['world_model_loss']
-        world_model_loss.backward()
-        world_model_optimizer.step()
+        # # backward for World Model
+        # world_model_loss = forward_dict['world_model_loss']
+        # world_model_loss.backward()
+        # world_model_optimizer.step()
 
         # Save
         if (step > save_every) and (step % save_every) == 0:
@@ -109,7 +109,7 @@ def train_bc(train_dataloader, val_dataloader, config):
             optimizer_ckpt_path = os.path.join(ckpt_dir, f'optimizers_step_{step}_seed_{seed}.ckpt')
             torch.save({
                 'policy_optimizer': optimizer.state_dict(),
-                'world_model_optimizer': world_model_optimizer.state_dict()
+                # 'world_model_optimizer': world_model_optimizer.state_dict()
             }, optimizer_ckpt_path)
 
 

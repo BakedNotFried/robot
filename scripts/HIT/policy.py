@@ -24,7 +24,7 @@ class HITPolicy(nn.Module):
             self.action_idx = None
         
         # Create the world model
-        self.world_model = WorldModel(latent_dim=512 * 98, action_dim=8 * 10)
+        # self.world_model = WorldModel(latent_dim=512 * 98, action_dim=8 * 10)
     
     def __call__(self, qpos, image, actions=None, next_image=None):
         if self.state_idx is not None:
@@ -52,12 +52,12 @@ class HITPolicy(nn.Module):
             hs_img_reshaped = hs_img_detached.reshape(batch_size, -1)
             actions_reshaped = actions.reshape(batch_size, -1)
             # Forward pass through world model
-            predicted_next_image = self.world_model(hs_img_reshaped, actions_reshaped)
-            predicted_next_image = predicted_next_image.unsqueeze(1)
+            # predicted_next_image = self.world_model(hs_img_reshaped, actions_reshaped)
+            # predicted_next_image = predicted_next_image.unsqueeze(1)
 
             # World model loss
-            world_model_loss = F.mse_loss(predicted_next_image, next_image)
-            loss_dict['world_model_loss'] = world_model_loss
+            # world_model_loss = F.mse_loss(predicted_next_image, next_image)
+            # loss_dict['world_model_loss'] = world_model_loss
 
             # Policy loss
             all_l1 = F.l1_loss(actions, a_hat, reduction='none')
@@ -81,15 +81,15 @@ class HITPolicy(nn.Module):
         a_hat, _, hs_img = self.model(qpos, image, None, None) # no action, sample from prior
         return a_hat, hs_img
     
-    def forward_world_model(self, hs_img, actions):
-        # Reshape hs_img if necessary (assuming it's [batch_size, num_queries, latent_dim])
-        batch_size, num_queries, latent_dim = hs_img.shape
-        hs_img_reshaped = hs_img.reshape(batch_size, -1)
-        actions_reshaped = actions.reshape(batch_size, -1)
-        # Forward pass through world model
-        predicted_next_image = self.world_model(hs_img_reshaped, actions_reshaped)
-        predicted_next_image = predicted_next_image.unsqueeze(1)
-        return predicted_next_image
+    # def forward_world_model(self, hs_img, actions):
+    #     # Reshape hs_img if necessary (assuming it's [batch_size, num_queries, latent_dim])
+    #     batch_size, num_queries, latent_dim = hs_img.shape
+    #     hs_img_reshaped = hs_img.reshape(batch_size, -1)
+    #     actions_reshaped = actions.reshape(batch_size, -1)
+    #     # Forward pass through world model
+    #     predicted_next_image = self.world_model(hs_img_reshaped, actions_reshaped)
+    #     predicted_next_image = predicted_next_image.unsqueeze(1)
+    #     return predicted_next_image
         
     def configure_optimizers(self):
         return self.optimizer   
@@ -97,12 +97,12 @@ class HITPolicy(nn.Module):
     def serialize(self):
         return {
             'policy': self.model.state_dict(),
-            'world_model': self.world_model.state_dict()
+            # 'world_model': self.world_model.state_dict()
         }
 
     def deserialize(self, model_dict):
         self.model.load_state_dict(model_dict['policy'])
-        self.world_model.load_state_dict(model_dict['world_model'])
+        # self.world_model.load_state_dict(model_dict['world_model'])
         return True
         
 class WorldModel(nn.Module):
