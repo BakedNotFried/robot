@@ -24,6 +24,50 @@ from omegaconf import OmegaConf
 import torch.nn as nn
 config_name = "train_widow"
 
+def normalize_to_neg_one_to_one(img):
+    return img * 2 - 1
+
+def save_experiment_data(save_dir, image_actual_data, image_predicted_data, progress_data, joint_states_data):
+    """
+    Save experiment data to numpy files.
+    
+    Args:
+    save_dir (str): Directory to save the data files
+    image_actual_data (list): List of actual image tensors
+    image_predicted_data (list): List of predicted image tensors
+    progress_data (list): List of progress values
+    joint_states_data (list): List of joint states
+    """
+    
+    # Create the save directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+
+    # List the number of experiments
+    num_experiments = len(os.listdir(save_dir))
+
+    # Create a new directory for the current experiment
+    save_dir = os.path.join(save_dir, f'{num_experiments}')
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Convert lists to numpy arrays
+    image_actual_array = np.array(image_actual_data)
+    image_predicted_array = np.array(image_predicted_data)
+    progress_array = np.array(progress_data)
+    joint_states_array = np.array(joint_states_data)
+    
+    # Save each array to a separate file
+    np.save(os.path.join(save_dir, 'image_actual_data.npy'), image_actual_array)
+    np.save(os.path.join(save_dir, 'image_predicted_data.npy'), image_predicted_array)
+    np.save(os.path.join(save_dir, 'progress_data.npy'), progress_array)
+    np.save(os.path.join(save_dir, 'joint_states_data.npy'), joint_states_array)
+    
+    print(f"Data saved successfully in {save_dir}")
+    print(f"Shapes of saved arrays:")
+    print(f"image_actual_data: {image_actual_array.shape}")
+    print(f"image_predicted_data: {image_predicted_array.shape}")
+    print(f"progress_data: {progress_array.shape}")
+    print(f"joint_states_data: {joint_states_array.shape}")
+
 class VQWorldModel(nn.Module):
     def __init__(self, latent_dim=256, action_dim=8):
         super().__init__()
@@ -65,7 +109,7 @@ from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 
 # Metrics
 import lpips
-from torcheval.metrics import PeakSignalNoiseRatio
+from torchmetrics.functional.image import peak_signal_noise_ratio
 
 from robot.keyboard_interface import KeyboardExperimentInterface
 
@@ -119,17 +163,27 @@ class RobotInference(InterbotixRobotNode):
         # Metrics
         self.lpips_loss_fn = lpips.LPIPS(net='alex').to(self.device)
         self.lpips_loss_fn.eval()
-        self.psnr_score = PeakSignalNoiseRatio()
 
-        # mlp, vq, hit
+        # experiment variables
+        self.use_displays = False
+        self.use_control = False
+        self.record_data = True
+        self.num_experiment_steps = 5
+        self.step_num = 0
+        # task type. options: pot, ...
+        self.task_type = "pot"
+        # options mlp, vq, hit
         self.policy_type = "hit"
-        # dm or simp
+        # options dm or simp
         self.world_model_type = "dm"
+        self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "/"
+        
         # CNNMLP Policy Setup
         if self.policy_type == "mlp":
             seed_everything(42)
             # Init Policy
-            checkpoint_path = '/home/qutrll/data/checkpoints/cnn_mlp/1/checkpoint_step_100000_seed_42.ckpt'
+            if self.task_type == "pot":
+                checkpoint_path = '/home/qutrll/data/checkpoints/cnn_mlp/1/checkpoint_step_100000_seed_42.ckpt'
             checkpoint = torch.load(checkpoint_path)
             self.policy = PolicyCNNMLP()
             self.policy = self.policy.to(self.device)
@@ -150,8 +204,9 @@ class RobotInference(InterbotixRobotNode):
         # VQBET Policy Setup
         elif self.policy_type == "vq":
             # Calculate the relative path
-            current_dir = Path('/home/qutrll/interbotix_ws/src/robot/scripts/')
-            config_path = Path('/home/qutrll/interbotix_ws/src/robot/robot/vq_bet_official/examples/configs/train_widow.yaml')
+            if self.task_type == "pot":
+                current_dir = Path('/home/qutrll/interbotix_ws/src/robot/scripts/')
+                config_path = Path('/home/qutrll/interbotix_ws/src/robot/robot/vq_bet_official/examples/configs/train_widow.yaml')
             relative_path = os.path.relpath(config_path.parent, current_dir)
 
             # Initialize Hydra with the relative path
@@ -173,13 +228,15 @@ class RobotInference(InterbotixRobotNode):
             self.world_model = VQWorldModel(latent_dim=256, action_dim=80)
             self.world_model = self.world_model.to(cfg.device)
             self.world_model.eval()
-            world_model_path = "/home/qutrll/data/checkpoints/vq_bet/model/4/world_model.pt"
+            if self.task_type == "pot":
+                world_model_path = "/home/qutrll/data/checkpoints/vq_bet/model/4/world_model.pt"
             self.world_model.load_state_dict(torch.load(world_model_path))
 
         # HIT Policy Setup
         elif self.policy_type == "hit":
             policy_class = 'HIT'
-            config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/all_configs.json"
+            if self.task_type == "pot":
+                config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/all_configs.json"
             config = json.load(open(config_dir))
             policy_config = config['policy_config']
 
@@ -189,15 +246,17 @@ class RobotInference(InterbotixRobotNode):
 
             self.policy = make_policy(policy_class, policy_config)
             self.policy.eval()
-            loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_100000_seed_42.ckpt", map_location='cuda'))
+            if self.task_type == "pot":
+                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_100000_seed_42.ckpt", map_location='cuda'))
             if not loading_status:
                 print(f'Failed to load policy_last.ckpt')
             self.policy.cuda()
         
         # Diffusion World Model Setup
         if self.world_model_type == "dm":
-            with open("/home/qutrll/denoising-diffusion-pytorch/examples/action_stats.json", 'r') as f:
-                stats = json.load(f)
+            if self.task_type == "pot":
+                with open("/home/qutrll/denoising-diffusion-pytorch/examples/action_stats.json", 'r') as f:
+                    stats = json.load(f)
             action_mean = torch.tensor(stats['mean']).to(self.device)
             action_std = torch.tensor(stats['std']).to(self.device)
             action_min = torch.tensor(stats['min']).to(self.device)
@@ -228,7 +287,8 @@ class RobotInference(InterbotixRobotNode):
             self.diffusion_world_model = self.diffusion_world_model.to(self.device)
 
             # Load checkpoints
-            checkpoint_dir = "/home/qutrll/data/checkpoints/diffusion_wm/3/checkpoint_step_80004_seed_42.ckpt"
+            if self.task_type == "pot":
+                checkpoint_dir = "/home/qutrll/data/checkpoints/diffusion_wm/3/checkpoint_step_80004_seed_42.ckpt"
             checkpoint = torch.load(checkpoint_dir)
             self.world_model.load_state_dict(checkpoint['world_model'])
             self.world_model.eval()
@@ -263,6 +323,12 @@ class RobotInference(InterbotixRobotNode):
         self.next_image = None
         self.progress = None
 
+        # Setup Recording
+        self.image_actual_data = []
+        self.image_predicted_data = []
+        self.progress_data = []
+        self.joint_states_data = []
+
         # Setup Plotting
         # Initialize deques to store data for plotting
         self.lpips_data = deque(maxlen=100)
@@ -280,8 +346,6 @@ class RobotInference(InterbotixRobotNode):
         self.variance_amplification = 10000
 
         # Set up the plot
-        self.use_displays = True
-        self.use_control = True
         if self.use_displays:
             plt.ion()
             self.fig, (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5, self.ax6, self.ax7) = plt.subplots(7, 1, figsize=(10, 25))
@@ -341,14 +405,13 @@ class RobotInference(InterbotixRobotNode):
         # Visual Metrics
         if self.next_image is not None:
             # Lpips
-            d = self.lpips_loss_fn(self.reshaped_images_tensor.squeeze(0), self.next_image)
+            # Scale images to -1 to 1
+            d = self.lpips_loss_fn(normalize_to_neg_one_to_one(self.reshaped_images_tensor.squeeze(0)), normalize_to_neg_one_to_one(self.next_image))
             self.lpips_data.append(d.item())
 
             # PSNR
-            self.psnr_score = self.psnr_score.update(self.reshaped_images_tensor.squeeze(), self.next_image.squeeze())
-            psnr_score = self.psnr_score.compute()
-            psnr_score = psnr_score.item()
-            self.psnr_data.append(psnr_score)
+            psnr_score = peak_signal_noise_ratio(self.reshaped_images_tensor.squeeze(0), self.next_image)
+            self.psnr_data.append(psnr_score.item())
         
         if self.use_displays and self.next_image is not None:
             # Update the plots
@@ -383,21 +446,6 @@ class RobotInference(InterbotixRobotNode):
             gripper = self.output[6]
             self.progress = output[0][-1]
 
-
-            input("Press Enter to continue...")
-
-            # Control Robot
-            self.robot_gripper_cmd.cmd = gripper
-            if self.use_control:
-                self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-                control_arms(
-                    [self.robot],
-                    [joints],
-                    [self.arm_joint_angles],
-                    moving_time=0.4,
-                )
-            self.arm_joint_angles = joints
-
         elif self.policy_type == "vq":
             # Policy Forward Pass
             with torch.no_grad():
@@ -420,17 +468,6 @@ class RobotInference(InterbotixRobotNode):
             self.progress = self.output[-1]
 
             input('Press Enter to continue...')
-
-            # Control Robot
-            self.robot_gripper_cmd.cmd = gripper
-            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-            control_arms(
-                [self.robot],
-                [joints],
-                [self.arm_joint_angles],
-                moving_time=0.4,
-            )
-            self.arm_joint_angles = joints
 
         elif self.policy_type == "hit":
             # Policy Forward Pass
@@ -465,10 +502,35 @@ class RobotInference(InterbotixRobotNode):
             gripper = self.output[6]
             self.progress = self.output[-1]
 
-            input('Press Enter to continue...')
+        # Record Data
+        if self.record_data:
+            if self.step_num <= self.num_experiment_steps:
+                print(f"Step {self.step_num}/{self.num_experiment_steps}")
+                self.image_actual_data.append(self.reshaped_images_tensor.squeeze(0).cpu().numpy())
+                self.image_predicted_data.append(self.next_image.cpu().numpy())
+                self.progress_data.append(self.progress)
+                self.joint_states_data.append(self.output[:7])
+                # Check if any variables are none
+                assert self.reshaped_images_tensor is not None, "reshaped_images_tensor is None"
+                assert self.next_image is not None, "next_image is None"
+                assert self.progress is not None, "progress is None"
+                assert self.output is not None, "output is None"
+                self.step_num += 1
+            
+            elif self.step_num > self.num_experiment_steps:
+                print("Experiment Complete. Saving Data....")
+                self.record_data = False
+                pdb.set_trace()
+                # Save data
+                save_experiment_data(self.record_save_dir, self.image_actual_data, self.image_predicted_data, self.progress_data, self.joint_states_data)
 
-            # Control Robot
-            self.robot_gripper_cmd.cmd = gripper
+
+
+        input("Press Enter to continue...")
+
+        # Control Robot
+        self.robot_gripper_cmd.cmd = gripper
+        if self.use_control:
             self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
             control_arms(
                 [self.robot],
@@ -476,7 +538,7 @@ class RobotInference(InterbotixRobotNode):
                 [self.arm_joint_angles],
                 moving_time=0.4,
             )
-            self.arm_joint_angles = joints
+        self.arm_joint_angles = joints
         
         # Update the previous images tensor
         self.prev_images_tensor = self.reshaped_images_tensor
@@ -535,9 +597,9 @@ class RobotInference(InterbotixRobotNode):
 
         # Ensure all data lists have the same length
         min_length = min(len(self.x_data), len(self.lpips_data), len(self.normalized_lpips_data),
-                         len(self.smoothed_lpips_data), len(self.progress_data), 
-                         len(self.progress_gradient_data), len(self.progress_second_derivative_data),
-                         len(self.progress_gradient_variance_data), len(self.psnr_data))
+                        len(self.smoothed_lpips_data), len(self.progress_data), 
+                        len(self.progress_gradient_data), len(self.progress_second_derivative_data),
+                        len(self.progress_gradient_variance_data), len(self.psnr_data))
         
         x_data = list(self.x_data)[-min_length:]
         lpips_data = list(self.lpips_data)[-min_length:]
@@ -547,7 +609,7 @@ class RobotInference(InterbotixRobotNode):
         gradient_data = list(self.progress_gradient_data)[-min_length:]
         second_derivative_data = list(self.progress_second_derivative_data)[-min_length:]
         variance_data = list(self.progress_gradient_variance_data)[-min_length:]
-        psnr_data = list(self.psnr_data)[-min_length]
+        psnr_data = list(self.psnr_data)[-min_length:]
 
         # Adjust y-axis limit for variance plot if necessary
         max_variance = max(variance_data)
