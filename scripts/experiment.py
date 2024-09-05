@@ -166,18 +166,23 @@ class RobotInference(InterbotixRobotNode):
 
         # experiment variables
         self.use_displays = True
+        self.use_plots = True
         self.use_control = True
-        self.record_data = False
-        self.keyboard_control = True
+        self.record_data = True
+        self.keyboard_control = False
+        self.joint_config_event = False
         self.num_experiment_steps = 30
         self.step_num = 0
-        # task type. options: pot, ...
+        self.event_step = 32
+        # task type. options: pot, shaker, cupboard
         self.task_type = "pot"
+        # trial type. options: IND, OODVD, OODHD
+        self.trial_type = "OODHD"
         # options mlp, vq, hit
         self.policy_type = "hit"
         # options dm or simp
         self.world_model_type = "dm"
-        self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "_" + self.world_model_type + "/"
+        self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "_" + self.world_model_type + "/" + self.trial_type
         
         # CNNMLP Policy Setup
         if self.policy_type == "mlp":
@@ -248,7 +253,7 @@ class RobotInference(InterbotixRobotNode):
             self.policy = make_policy(policy_class, policy_config)
             self.policy.eval()
             if self.task_type == "pot":
-                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_100000_seed_42.ckpt", map_location='cuda'))
+                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_120000_seed_42.ckpt", map_location='cuda'))
             if not loading_status:
                 print(f'Failed to load policy_last.ckpt')
             self.policy.cuda()
@@ -313,6 +318,22 @@ class RobotInference(InterbotixRobotNode):
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
 
+        # target_joint_angles = [angle + np.random.uniform(-0.65, 0.65) if i not in [0, 1, 2] else angle for i, angle in enumerate(self.arm_joint_angles)]
+        # target_joint_angles[0] += 1.9
+
+        # # Control Arms
+        # control_arms(
+        #     [self.robot],
+        #     [target_joint_angles],
+        #     [self.arm_joint_angles],
+        #     moving_time=1.5,
+        # )
+        # self.gripper_joint = np.random.uniform(-0.25, 0.25)
+        # self.robot_gripper_cmd.cmd = self.gripper_joint
+        # self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+        # self.arm_joint_angles = target_joint_angles
+        # input("\n Press Enter to continue from event...")
+
         # Output. Starts with arm joint angles, gripper joint, and progress
         self.output = self.arm_joint_angles + [self.gripper_joint] + [0.0]
 
@@ -336,7 +357,7 @@ class RobotInference(InterbotixRobotNode):
         self.normalized_lpips_data = deque(maxlen=100)
         self.smoothed_lpips_data = deque(maxlen=100)
         self.psnr_data = deque(maxlen=100)
-        self.progress_data = deque(maxlen=100)
+        self.progress_plot_data = deque(maxlen=100)
         self.progress_gradient_data = deque(maxlen=100)
         self.progress_gradient_variance_data = deque(maxlen=100)
         self.progress_second_derivative_data = deque(maxlen=100)
@@ -390,6 +411,9 @@ class RobotInference(InterbotixRobotNode):
 
         if self.use_displays and self.next_image is not None:
             self.display_images()
+        
+        if self.joint_config_event:
+            input("\n Press Enter to continue from event...")
 
         # Convert images to tensors and normalize
         self.images_tensor[0, 0] = torch.from_numpy(self.field_image).float().permute(2, 0, 1) / 255.0
@@ -397,7 +421,12 @@ class RobotInference(InterbotixRobotNode):
         self.reshaped_images_tensor = F.interpolate(reshaped_tensor, size=(224, 224), mode='bilinear', align_corners=False)
         self.reshaped_images_tensor = self.reshaped_images_tensor.unsqueeze(0)
         # Convert prev action to tensor
-        self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
+        if self.joint_config_event:
+            q_pos = self.arm_joint_angles + [self.gripper_joint]
+            self.q_pos_tensor[0] = torch.tensor(q_pos, dtype=torch.float32, device=self.device)
+            self.joint_config_event = False
+        else:
+            self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
 
         if self.first_run:
             self.first_run = False
@@ -414,7 +443,7 @@ class RobotInference(InterbotixRobotNode):
             psnr_score = peak_signal_noise_ratio(self.reshaped_images_tensor.squeeze(0), self.next_image)
             self.psnr_data.append(psnr_score.item())
         
-        if self.use_displays and self.next_image is not None:
+        if self.use_plots and self.next_image is not None:
             # Update the plots
             lpips = self.lpips_data[-1] if self.lpips_data else 0
             self.update_plots(lpips, self.progress)
@@ -429,10 +458,20 @@ class RobotInference(InterbotixRobotNode):
                 with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                     output, hs = self.policy(input_images, self.q_pos_tensor)
             
-            # World Model Forward Pass
-            with torch.no_grad():
+            # # World Model Forward Pass
+            # with torch.no_grad():
+            #     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+            #         self.next_image = self.world_model(hs, output)
+
+            # # For display
+            # self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
+            # self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
+            if self.world_model_type == "dm":
+                self.action_tensor[0, 0:-1] = self.normalize_actions(output[:,5,0:-1])
+                self.action_tensor[0, 0:-1] = self.scale_actions(self.action_tensor[0, 0:-1])
+                self.action_tensor[0, -1] = output[:,5,-1]
                 with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    self.next_image = self.world_model(hs, output)
+                    self.next_image = self.diffusion_world_model.sample(input_images, self.action_tensor, batch_size=1)
 
             # For display
             self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
@@ -445,7 +484,8 @@ class RobotInference(InterbotixRobotNode):
             self.output = output.tolist()
             joints = self.output[:6]
             gripper = self.output[6]
-            self.progress = output[0][-1]
+            self.progress = self.output[-1]
+
 
         elif self.policy_type == "vq":
             # Policy Forward Pass
@@ -547,6 +587,28 @@ class RobotInference(InterbotixRobotNode):
                     self.reset_experiment()
                     self.step_num = 0
                     print("Experiment Reset")
+
+        # Event Step
+        if self.trial_type != "IND" and self.step_num == self.event_step:
+            input("\n Press Enter to continue from event...")
+            if self.trial_type == "OODJC":
+                # Add random noise to the joint angles
+                target_joint_angles = [angle + np.random.uniform(-0.65, 0.65) if i not in [0, 1, 2] else angle for i, angle in enumerate(self.arm_joint_angles)]
+                target_joint_angles[0] += 1.3
+
+                # Control Arms
+                control_arms(
+                    [self.robot],
+                    [target_joint_angles],
+                    [self.arm_joint_angles],
+                    moving_time=1.5,
+                )
+                self.gripper_joint = np.random.uniform(-0.25, 0.25)
+                self.robot_gripper_cmd.cmd = self.gripper_joint
+                self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+                self.arm_joint_angles = target_joint_angles
+                input("\n Press Enter to continue from event...")
+                self.joint_config_event = True
     
 
     def reset_record_data(self):
@@ -578,11 +640,11 @@ class RobotInference(InterbotixRobotNode):
             smoothed_lpips = self.normalized_lpips_data[-1]
         self.smoothed_lpips_data.append(smoothed_lpips)
 
-        self.progress_data.append(progress)
+        self.progress_plot_data.append(progress)
 
         # Calculate progress gradient
-        if len(self.progress_data) > 1:
-            gradient = self.progress_data[-1] - self.progress_data[-2]
+        if len(self.progress_plot_data) > 1:
+            gradient = self.progress_plot_data[-1] - self.progress_plot_data[-2]
         else:
             gradient = 0
         self.progress_gradient_data.append(gradient)
@@ -607,7 +669,7 @@ class RobotInference(InterbotixRobotNode):
 
         # Ensure all data lists have the same length
         min_length = min(len(self.x_data), len(self.lpips_data), len(self.normalized_lpips_data),
-                        len(self.smoothed_lpips_data), len(self.progress_data), 
+                        len(self.smoothed_lpips_data), len(self.progress_plot_data), 
                         len(self.progress_gradient_data), len(self.progress_second_derivative_data),
                         len(self.progress_gradient_variance_data), len(self.psnr_data))
         
@@ -615,7 +677,7 @@ class RobotInference(InterbotixRobotNode):
         lpips_data = list(self.lpips_data)[-min_length:]
         normalized_lpips_data = list(self.normalized_lpips_data)[-min_length:]
         smoothed_lpips_data = list(self.smoothed_lpips_data)[-min_length:]
-        progress_data = list(self.progress_data)[-min_length:]
+        progress_data = list(self.progress_plot_data)[-min_length:]
         gradient_data = list(self.progress_gradient_data)[-min_length:]
         second_derivative_data = list(self.progress_second_derivative_data)[-min_length:]
         variance_data = list(self.progress_gradient_variance_data)[-min_length:]
