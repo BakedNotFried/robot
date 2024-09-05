@@ -165,10 +165,11 @@ class RobotInference(InterbotixRobotNode):
         self.lpips_loss_fn.eval()
 
         # experiment variables
-        self.use_displays = False
-        self.use_control = False
-        self.record_data = True
-        self.num_experiment_steps = 5
+        self.use_displays = True
+        self.use_control = True
+        self.record_data = False
+        self.keyboard_control = True
+        self.num_experiment_steps = 30
         self.step_num = 0
         # task type. options: pot, ...
         self.task_type = "pot"
@@ -176,7 +177,7 @@ class RobotInference(InterbotixRobotNode):
         self.policy_type = "hit"
         # options dm or simp
         self.world_model_type = "dm"
-        self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "/"
+        self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "_" + self.world_model_type + "/"
         
         # CNNMLP Policy Setup
         if self.policy_type == "mlp":
@@ -467,8 +468,6 @@ class RobotInference(InterbotixRobotNode):
             gripper = self.output[6]
             self.progress = self.output[-1]
 
-            input('Press Enter to continue...')
-
         elif self.policy_type == "hit":
             # Policy Forward Pass
             with torch.no_grad():
@@ -502,6 +501,25 @@ class RobotInference(InterbotixRobotNode):
             gripper = self.output[6]
             self.progress = self.output[-1]
 
+
+        if self.keyboard_control:
+            input("Press Enter to continue...")
+
+        # Control Robot
+        self.robot_gripper_cmd.cmd = gripper
+        if self.use_control:
+            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+            control_arms(
+                [self.robot],
+                [joints],
+                [self.arm_joint_angles],
+                moving_time=0.4,
+            )
+        self.arm_joint_angles = joints
+        
+        # Update the previous images tensor
+        self.prev_images_tensor = self.reshaped_images_tensor
+
         # Record Data
         if self.record_data:
             if self.step_num <= self.num_experiment_steps:
@@ -519,31 +537,23 @@ class RobotInference(InterbotixRobotNode):
             
             elif self.step_num > self.num_experiment_steps:
                 print("Experiment Complete. Saving Data....")
-                self.record_data = False
-                pdb.set_trace()
                 # Save data
                 save_experiment_data(self.record_save_dir, self.image_actual_data, self.image_predicted_data, self.progress_data, self.joint_states_data)
 
+                # Get User input
+                user_input = input("\n Press 'r' to reset data: ")
+                if user_input == 'r':
+                    self.reset_record_data()
+                    self.reset_experiment()
+                    self.step_num = 0
+                    print("Experiment Reset")
+    
 
-
-        input("Press Enter to continue...")
-
-        # Control Robot
-        self.robot_gripper_cmd.cmd = gripper
-        if self.use_control:
-            self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-            control_arms(
-                [self.robot],
-                [joints],
-                [self.arm_joint_angles],
-                moving_time=0.4,
-            )
-        self.arm_joint_angles = joints
-        
-        # Update the previous images tensor
-        self.prev_images_tensor = self.reshaped_images_tensor
-
-
+    def reset_record_data(self):
+        self.image_actual_data = []
+        self.image_predicted_data = []
+        self.progress_data = []
+        self.joint_states_data = []
 
 
     def process_image(self, msg):
@@ -698,6 +708,37 @@ class RobotInference(InterbotixRobotNode):
             [start_arm_qpos],
             moving_time=1.5,
         )
+
+    def reset_experiment(self):
+        """Move robot arm to start demonstration pose"""
+        # move arm to starting position
+        start_arm_qpos = START_ARM_POSE[:6]
+        control_arms(
+            [self.robot],
+            [start_arm_qpos],
+            [self.arm_joint_angles],
+            moving_time=2.5,
+        )
+
+        # Establish the initial joint angles
+        self.arm_joint_angles = START_ARM_POSE[:6]
+        self.robot.arm.set_joint_positions(START_ARM_POSE[:6], blocking=False)
+        self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
+        self.robot_gripper_cmd.cmd = self.gripper_joint
+        self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+
+        # Output. Starts with arm joint angles, gripper joint, and progress
+        self.output = self.arm_joint_angles + [self.gripper_joint] + [0.0]
+
+        # Preallocate tensors for images and actions
+        self.images_tensor = torch.empty(1, 1, 3, self.height, self.width, dtype=torch.float32, device=self.device)
+        self.prev_images_tensor = torch.empty(1, 1, 3, 224, 224, dtype=torch.float32, device=self.device)
+        self.q_pos_tensor = torch.empty(1, 7, dtype=torch.float32, device=self.device)
+        self.action_tensor = torch.empty(1, 8, dtype=torch.float32, device=self.device)
+        self.next_image = None
+        self.progress = None
+
+        self.first_run = True
     
     def __del__(self):
         plt.close(self.fig)
