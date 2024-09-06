@@ -243,8 +243,8 @@ class RobotInference(InterbotixRobotNode):
         self.task_type = "pot"
         # trial type. options: IND, OODVD, OODHD
         self.trial_type = "IND"
-        # options mlp, vq, hit
-        self.policy_type = "ensemble"
+        # options mlp, vq, hit, ensemble, dropout
+        self.policy_type = "dropout"
         # options dm or simp
         self.world_model_type = ""
         if self.policy_type != "ensemble":
@@ -334,6 +334,25 @@ class RobotInference(InterbotixRobotNode):
             for seed in seeds:
                 self.policies.append(create_hit_policy(seed, self.device))
         
+        elif self.policy_type == "dropout":
+            policy_class = 'HIT'
+            if self.task_type == "pot":
+                config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/dropout/all_configs.json"
+            config = json.load(open(config_dir))
+            policy_config = config['policy_config']
+
+            seed_everything(46)
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            assert self.device == torch.device("cuda"), "CUDA is not available"
+
+            self.policy = make_policy(policy_class, policy_config)
+            self.policy.train()
+            if self.task_type == "pot":
+                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/dropout/policy_step_100000_seed_46.ckpt", map_location='cuda'))
+            if not loading_status:
+                print(f'Failed to load policy_last.ckpt')
+            self.policy.cuda()
+
         # Diffusion World Model Setup
         if self.world_model_type == "dm":
             if self.task_type == "pot":
@@ -638,6 +657,26 @@ class RobotInference(InterbotixRobotNode):
             joints = self.output[:6]
             gripper = self.output[6]
             self.progress = self.output[-1]
+        
+        elif self.policy_type == "dropout":
+            # Policy Forward Pass
+            actions = []
+            for _ in range(5):
+                with torch.no_grad():
+                    output, hs = self.policy.forward_inf(self.q_pos_tensor, input_images)
+                actions.append(output)
+            actions = torch.stack(actions, dim=1)
+            output = actions.mean(dim=1).squeeze()
+            selection_index = 4
+            ensemble_output_variance = actions.squeeze().var(dim=0)[selection_index][0:7]
+            # Convert from torch, handling BFloat16
+            output = output.float().cpu().numpy().squeeze()
+            output = output[selection_index]
+            self.output = output.tolist()
+            joints = self.output[:6]
+            gripper = self.output[6]
+            self.progress = self.output[-1]
+            pdb.set_trace()
 
         if self.keyboard_control:
             input("Press Enter to continue...")
@@ -685,7 +724,7 @@ class RobotInference(InterbotixRobotNode):
                     self.step_num = 0
                     print("Experiment Reset")
 
-        elif self.record_data and self.policy_type == "ensemble":
+        elif self.record_data and (self.policy_type == "ensemble" or self.policy_type == "dropout"):
             if self.step_num <= self.num_experiment_steps:
                 print(f"Step {self.step_num}/{self.num_experiment_steps}")
                 self.image_actual_data.append(self.reshaped_images_tensor.squeeze(0).cpu().numpy())
@@ -898,7 +937,7 @@ class RobotInference(InterbotixRobotNode):
             progress_text = f'Progress: {progress:.2f}/1.0'
             font = cv2.FONT_HERSHEY_SIMPLEX
             cv2.putText(self.field_image, progress_text, (10, bar_top - 10), font, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-            
+
             # Just display the field image if the predicted image is not available
             cv2.imshow('Field Image', cv2.cvtColor(self.field_image, cv2.COLOR_BGR2RGB))
             cv2.waitKey(1)
