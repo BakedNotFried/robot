@@ -68,6 +68,52 @@ def save_experiment_data(save_dir, image_actual_data, image_predicted_data, prog
     print(f"progress_data: {progress_array.shape}")
     print(f"joint_states_data: {joint_states_array.shape}")
 
+def save_ensemble_data(save_dir, image_actual_data, progress_data, joint_states_data, action_data, action_variance_data):
+    """
+    Save experiment data to numpy files.
+    
+    Args:
+    save_dir (str): Directory to save the data files
+    image_actual_data (list): List of actual image tensors
+    image_predicted_data (list): List of predicted image tensors
+    progress_data (list): List of progress values
+    joint_states_data (list): List of joint states
+    action_data (list): List of actions
+    action_variance_data (list): List of action variances
+    """
+    
+    # Create the save directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+
+    # List the number of experiments
+    num_experiments = len(os.listdir(save_dir))
+
+    # Create a new directory for the current experiment
+    save_dir = os.path.join(save_dir, f'{num_experiments}')
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Convert lists to numpy arrays
+    image_actual_array = np.array(image_actual_data)
+    progress_array = np.array(progress_data)
+    joint_states_array = np.array(joint_states_data)
+    action_array = np.array(action_data)
+    action_variance_array = np.array(action_variance_data)
+    
+    # Save each array to a separate file
+    np.save(os.path.join(save_dir, 'image_actual_data.npy'), image_actual_array)
+    np.save(os.path.join(save_dir, 'progress_data.npy'), progress_array)
+    np.save(os.path.join(save_dir, 'joint_states_data.npy'), joint_states_array)
+    np.save(os.path.join(save_dir, 'action_data.npy'), action_array)
+    np.save(os.path.join(save_dir, 'action_variance_data.npy'), action_variance_array)
+    
+    print(f"Data saved successfully in {save_dir}")
+    print(f"Shapes of saved arrays:")
+    print(f"image_actual_data: {image_actual_array.shape}")
+    print(f"progress_data: {progress_array.shape}")
+    print(f"joint_states_data: {joint_states_array.shape}")
+    print(f"action_data: {action_array.shape}")
+    print(f"action_variance_data: {action_variance_array.shape}")
+
 class VQWorldModel(nn.Module):
     def __init__(self, latent_dim=256, action_dim=8):
         super().__init__()
@@ -103,6 +149,24 @@ class VQWorldModel(nn.Module):
 # HIT Policy + World Model
 import json
 from HIT.model_util import make_policy
+
+def create_hit_policy(seed, device):
+        policy_class = 'HIT'
+        config_dir = f"/home/qutrll/data/checkpoints/HIT/pot_pick_place/ensemble/{seed}/all_configs.json"
+        config = json.load(open(config_dir))
+        policy_config = config['policy_config']
+
+        seed_everything(seed)
+
+        policy = make_policy(policy_class, policy_config)
+        policy.eval()
+        ckpt_dir = f"/home/qutrll/data/checkpoints/HIT/pot_pick_place/ensemble/{seed}/policy_step_60000_seed_{seed}.ckpt"
+        loading_status = policy.deserialize(torch.load(ckpt_dir, map_location='cuda'))
+        if not loading_status:
+            print(f'Failed to load policy_last.ckpt')
+        policy.cuda()
+
+        return policy
 
 # Diffusion World Model
 from denoising_diffusion_pytorch import Unet, GaussianDiffusion
@@ -166,23 +230,27 @@ class RobotInference(InterbotixRobotNode):
 
         # experiment variables
         self.use_displays = True
-        self.use_plots = True
+        self.use_plots = False
         self.use_control = True
         self.record_data = True
         self.keyboard_control = False
         self.joint_config_event = False
         self.num_experiment_steps = 30
         self.step_num = 0
-        self.event_step = 32
+        # event step 4 for VD
+        self.event_step = 4
         # task type. options: pot, shaker, cupboard
         self.task_type = "pot"
         # trial type. options: IND, OODVD, OODHD
-        self.trial_type = "OODHD"
+        self.trial_type = "IND"
         # options mlp, vq, hit
-        self.policy_type = "hit"
+        self.policy_type = "ensemble"
         # options dm or simp
-        self.world_model_type = "dm"
-        self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "_" + self.world_model_type + "/" + self.trial_type
+        self.world_model_type = ""
+        if self.policy_type != "ensemble":
+            self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "_" + self.world_model_type + "/" + self.trial_type
+        else:
+            self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "/" + self.trial_type
         
         # CNNMLP Policy Setup
         if self.policy_type == "mlp":
@@ -253,10 +321,18 @@ class RobotInference(InterbotixRobotNode):
             self.policy = make_policy(policy_class, policy_config)
             self.policy.eval()
             if self.task_type == "pot":
-                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_120000_seed_42.ckpt", map_location='cuda'))
+                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_100000_seed_42.ckpt", map_location='cuda'))
             if not loading_status:
                 print(f'Failed to load policy_last.ckpt')
             self.policy.cuda()
+        
+        # Ensemble of HIT Policies
+        elif self.policy_type == "ensemble":
+            self.policies = []
+            seeds = [42, 43, 44, 45, 46]
+            # Create each policy
+            for seed in seeds:
+                self.policies.append(create_hit_policy(seed, self.device))
         
         # Diffusion World Model Setup
         if self.world_model_type == "dm":
@@ -350,6 +426,9 @@ class RobotInference(InterbotixRobotNode):
         self.image_predicted_data = []
         self.progress_data = []
         self.joint_states_data = []
+        # Ensemble
+        self.action_data = []
+        self.action_variance_data = []
 
         # Setup Plotting
         # Initialize deques to store data for plotting
@@ -368,7 +447,7 @@ class RobotInference(InterbotixRobotNode):
         self.variance_amplification = 10000
 
         # Set up the plot
-        if self.use_displays:
+        if self.use_plots:
             plt.ion()
             self.fig, (self.ax1, self.ax2, self.ax3, self.ax4, self.ax5, self.ax6, self.ax7) = plt.subplots(7, 1, figsize=(10, 25))
             self.fig.tight_layout(pad=3.0)
@@ -409,7 +488,7 @@ class RobotInference(InterbotixRobotNode):
     def field_image_callback(self, msg):
         self.field_image = self.process_image(msg)
 
-        if self.use_displays and self.next_image is not None:
+        if self.use_displays:
             self.display_images()
         
         if self.joint_config_event:
@@ -479,7 +558,7 @@ class RobotInference(InterbotixRobotNode):
 
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
-            selection_index = 5
+            selection_index = 4
             output = output[selection_index]
             self.output = output.tolist()
             joints = self.output[:6]
@@ -501,7 +580,7 @@ class RobotInference(InterbotixRobotNode):
 
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
-            selection_index = 5
+            selection_index = 4
             output = output[selection_index]
             self.output = output.tolist()
             joints = self.output[:6]
@@ -534,13 +613,31 @@ class RobotInference(InterbotixRobotNode):
 
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
-            selection_index = 5
+            selection_index = 4
             output = output[selection_index]
             self.output = output.tolist()
             joints = self.output[:6]
             gripper = self.output[6]
             self.progress = self.output[-1]
-
+        
+        elif self.policy_type == "ensemble":
+            # Policy Forward Pass
+            actions = []
+            for policy in self.policies:
+                with torch.no_grad():
+                    output, hs = policy.forward_inf(self.q_pos_tensor, input_images)
+                actions.append(output)
+            actions = torch.stack(actions, dim=1)
+            output = actions.mean(dim=1).squeeze()
+            selection_index = 4
+            ensemble_output_variance = actions.squeeze().var(dim=0)[selection_index][0:7]
+            # Convert from torch, handling BFloat16
+            output = output.float().cpu().numpy().squeeze()
+            output = output[selection_index]
+            self.output = output.tolist()
+            joints = self.output[:6]
+            gripper = self.output[6]
+            self.progress = self.output[-1]
 
         if self.keyboard_control:
             input("Press Enter to continue...")
@@ -561,7 +658,7 @@ class RobotInference(InterbotixRobotNode):
         self.prev_images_tensor = self.reshaped_images_tensor
 
         # Record Data
-        if self.record_data:
+        if self.record_data and self.policy_type != "ensemble":
             if self.step_num <= self.num_experiment_steps:
                 print(f"Step {self.step_num}/{self.num_experiment_steps}")
                 self.image_actual_data.append(self.reshaped_images_tensor.squeeze(0).cpu().numpy())
@@ -579,6 +676,34 @@ class RobotInference(InterbotixRobotNode):
                 print("Experiment Complete. Saving Data....")
                 # Save data
                 save_experiment_data(self.record_save_dir, self.image_actual_data, self.image_predicted_data, self.progress_data, self.joint_states_data)
+
+                # Get User input
+                user_input = input("\n Press 'r' to reset data: ")
+                if user_input == 'r':
+                    self.reset_record_data()
+                    self.reset_experiment()
+                    self.step_num = 0
+                    print("Experiment Reset")
+
+        elif self.record_data and self.policy_type == "ensemble":
+            if self.step_num <= self.num_experiment_steps:
+                print(f"Step {self.step_num}/{self.num_experiment_steps}")
+                self.image_actual_data.append(self.reshaped_images_tensor.squeeze(0).cpu().numpy())
+                self.progress_data.append(self.progress)
+                self.joint_states_data.append(self.output[:7])
+                self.action_data.append(self.output[:7])
+                self.action_variance_data.append(ensemble_output_variance.squeeze().cpu().numpy())
+                # Check if any variables are none
+                assert self.reshaped_images_tensor is not None, "reshaped_images_tensor is None"
+                assert self.progress is not None, "progress is None"
+                assert self.output is not None, "output is None"
+                assert ensemble_output_variance is not None, "ensemble_output_variance is None"
+                self.step_num += 1
+            
+            elif self.step_num > self.num_experiment_steps:
+                print("Experiment Complete. Saving Data....")
+                # Save data
+                save_ensemble_data(self.record_save_dir, self.image_actual_data, self.progress_data, self.joint_states_data, self.action_data, self.action_variance_data)
 
                 # Get User input
                 user_input = input("\n Press 'r' to reset data: ")
@@ -616,6 +741,8 @@ class RobotInference(InterbotixRobotNode):
         self.image_predicted_data = []
         self.progress_data = []
         self.joint_states_data = []
+        self.action_data = []
+        self.action_variance_data = []
 
 
     def process_image(self, msg):
@@ -723,35 +850,59 @@ class RobotInference(InterbotixRobotNode):
 
     def display_images(self):
         # Resize the predicted image to match the field image size
-        resized_predicted_image = cv2.resize(self.predicted_image, (self.width, self.height))
+        if self.predicted_image is not None:
+            resized_predicted_image = cv2.resize(self.predicted_image, (self.width, self.height))
         
-        # Create a combined image with field image and predicted image side by side
-        combined_image = np.hstack((cv2.cvtColor(self.field_image, cv2.COLOR_BGR2RGB), cv2.cvtColor(resized_predicted_image, cv2.COLOR_BGR2RGB)))
-        
-        # Add labels to the images
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        cv2.putText(combined_image, 'Actual', (10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(combined_image, 'Imagined', (self.width + 10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
-        
-        # Add progress bar
-        progress = self.output[7]  # Assuming progress is the last element in self.output
-        bar_width = self.width * 2  # Full width of the combined image
-        bar_height = 20
-        bar_top = combined_image.shape[0] - bar_height - 10  # 10 pixels from the bottom
-        
-        # Draw the background of the progress bar
-        cv2.rectangle(combined_image, (0, bar_top), (bar_width, bar_top + bar_height), (100, 100, 100), -1)
-        
-        # Draw the filled part of the progress bar
-        filled_width = int(bar_width * progress / 1.0)
-        cv2.rectangle(combined_image, (0, bar_top), (filled_width, bar_top + bar_height), (0, 255, 0), -1)
-        
-        # Add progress text
-        progress_text = f'Progress: {progress:.2f}/1.0'
-        cv2.putText(combined_image, progress_text, (10, bar_top - 10), font, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-        
-        cv2.imshow('Current and Predicted Images', combined_image)
-        cv2.waitKey(1)
+            # Create a combined image with field image and predicted image side by side
+            combined_image = np.hstack((cv2.cvtColor(self.field_image, cv2.COLOR_BGR2RGB), cv2.cvtColor(resized_predicted_image, cv2.COLOR_BGR2RGB)))
+            
+            # Add labels to the images
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            cv2.putText(combined_image, 'Actual', (10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(combined_image, 'Imagined', (self.width + 10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+            
+            # Add progress bar
+            progress = self.output[7]  # Assuming progress is the last element in self.output
+            bar_width = self.width * 2  # Full width of the combined image
+            bar_height = 20
+            bar_top = combined_image.shape[0] - bar_height - 10  # 10 pixels from the bottom
+            
+            # Draw the background of the progress bar
+            cv2.rectangle(combined_image, (0, bar_top), (bar_width, bar_top + bar_height), (100, 100, 100), -1)
+            
+            # Draw the filled part of the progress bar
+            filled_width = int(bar_width * progress / 1.0)
+            cv2.rectangle(combined_image, (0, bar_top), (filled_width, bar_top + bar_height), (0, 255, 0), -1)
+            
+            # Add progress text
+            progress_text = f'Progress: {progress:.2f}/1.0'
+            cv2.putText(combined_image, progress_text, (10, bar_top - 10), font, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+            
+            cv2.imshow('Current and Predicted Images', combined_image)
+            cv2.waitKey(1)
+        else:
+            # Add progress bar
+            progress = self.output[7]  # Assuming progress is the last element in self.output
+            bar_width = self.width  # Full width of the combined image
+            bar_height = 20
+            bar_top = self.height - bar_height - 10  # 10 pixels from the bottom
+
+            # Draw the background of the progress bar
+            cv2.rectangle(self.field_image, (0, bar_top), (bar_width, bar_top + bar_height), (100, 100, 100), -1)
+
+            # Draw the filled part of the progress bar
+            filled_width = int(bar_width * progress / 1.0)
+            cv2.rectangle(self.field_image, (0, bar_top), (filled_width, bar_top + bar_height), (0, 255, 0), -1)
+
+            # Add progress text
+            progress_text = f'Progress: {progress:.2f}/1.0'
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            cv2.putText(self.field_image, progress_text, (10, bar_top - 10), font, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+            
+            # Just display the field image if the predicted image is not available
+            cv2.imshow('Field Image', cv2.cvtColor(self.field_image, cv2.COLOR_BGR2RGB))
+            cv2.waitKey(1)
+
 
         
     def robot_startup(self):

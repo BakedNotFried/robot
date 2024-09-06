@@ -6,7 +6,7 @@ from torchmetrics.functional.image import peak_signal_noise_ratio
 import os
 
 policy_type = "hit_dm"
-trial_type = "OODHD"
+trial_type = "IND"
 data_dir = f"/home/qutrll/data/experiments/pot/{policy_type}/{trial_type}/"
 experiment_nums = os.listdir(data_dir)
 results_dir = f"/home/qutrll/data/experiments/pot/{policy_type}/results/{trial_type}/"

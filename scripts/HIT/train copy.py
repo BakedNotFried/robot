@@ -313,8 +313,6 @@ if __name__ == '__main__':
     parser.add_argument('--same_backbones', action='store_true')
     #use mask
     parser.add_argument('--use_mask', action='store_true')
-    # dropout
-    parser.add_argument('--dropout', action='store', type=float, default=0.1)
     
     # for image 
     parser.add_argument('--width', type=int, default=640)
