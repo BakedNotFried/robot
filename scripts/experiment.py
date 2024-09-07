@@ -242,7 +242,7 @@ class RobotInference(InterbotixRobotNode):
         # task type. options: pot, shaker, cupboard
         self.task_type = "pot"
         # trial type. options: IND, OODVD, OODHD
-        self.trial_type = "IND"
+        self.trial_type = "OODHD"
         # options mlp, vq, hit, ensemble, dropout
         self.policy_type = "dropout"
         # options dm or simp
@@ -341,17 +341,30 @@ class RobotInference(InterbotixRobotNode):
             config = json.load(open(config_dir))
             policy_config = config['policy_config']
 
-            seed_everything(46)
+            seed_everything(42)
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             assert self.device == torch.device("cuda"), "CUDA is not available"
 
             self.policy = make_policy(policy_class, policy_config)
-            self.policy.train()
+            self.policy.eval()
             if self.task_type == "pot":
-                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/dropout/policy_step_100000_seed_46.ckpt", map_location='cuda'))
+                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/dropout/policy_step_100000_seed_42.ckpt", map_location='cuda'))
             if not loading_status:
                 print(f'Failed to load policy_last.ckpt')
+
+            # Adjust dropout probability and enable dropout
+            for module in self.policy.modules():
+                if isinstance(module, (torch.nn.Dropout, torch.nn.Dropout2d)):
+                    module.p = 0.6  # Set dropout probability to 0.5
+                    module.train()
+                    print(f"Adjusted and enabled: {module}")
+
+            # Print every module
+            for module in self.policy.modules():
+                print(module)
+
             self.policy.cuda()
+
 
         # Diffusion World Model Setup
         if self.world_model_type == "dm":
@@ -661,7 +674,7 @@ class RobotInference(InterbotixRobotNode):
         elif self.policy_type == "dropout":
             # Policy Forward Pass
             actions = []
-            for _ in range(5):
+            for i in range(5):
                 with torch.no_grad():
                     output, hs = self.policy.forward_inf(self.q_pos_tensor, input_images)
                 actions.append(output)
@@ -676,7 +689,6 @@ class RobotInference(InterbotixRobotNode):
             joints = self.output[:6]
             gripper = self.output[6]
             self.progress = self.output[-1]
-            pdb.set_trace()
 
         if self.keyboard_control:
             input("Press Enter to continue...")
@@ -697,7 +709,7 @@ class RobotInference(InterbotixRobotNode):
         self.prev_images_tensor = self.reshaped_images_tensor
 
         # Record Data
-        if self.record_data and self.policy_type != "ensemble":
+        if self.record_data and (self.policy_type not in ["ensemble", "dropout"]):
             if self.step_num <= self.num_experiment_steps:
                 print(f"Step {self.step_num}/{self.num_experiment_steps}")
                 self.image_actual_data.append(self.reshaped_images_tensor.squeeze(0).cpu().numpy())

@@ -79,6 +79,20 @@ class BackboneBase(nn.Module):
         xs = self.body(tensor)
         return xs
 
+def add_dropout_to_resnet(model, dropout_prob=0.5):
+    for name, module in model.named_children():
+        if isinstance(module, nn.Sequential):
+            for n, m in module.named_children():
+                if isinstance(m, nn.ReLU):
+                    new_module = nn.Sequential(
+                        m,
+                        nn.Dropout(p=dropout_prob)
+                    )
+                    setattr(module, n, new_module)
+        else:
+            add_dropout_to_resnet(module, dropout_prob)
+    return model
+
 class Backbone(BackboneBase):
     """ResNet backbone with frozen BatchNorm."""
     def __init__(self, name: str,
