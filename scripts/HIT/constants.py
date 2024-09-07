@@ -21,4 +21,24 @@ TASK_CONFIGS = {
     'state_mask': None,
     'action_mask': None,
     },
+
+    'cupboard':{
+    'dataset_dir': DATA_DIR + '/cupboard',
+    'camera_names': ['cam_field_prev','cam_field'],
+    'observation_name': ['qpos'],
+    'state_dim':7,
+    'action_dim':8,
+    'state_mask': None,
+    'action_mask': None,
+    },
+
+    'wipe':{
+    'dataset_dir': DATA_DIR + '/wipe',
+    'camera_names': ['cam_field_prev','cam_field'],
+    'observation_name': ['qpos'],
+    'state_dim':7,
+    'action_dim':8,
+    'state_mask': None,
+    'action_mask': None,
+    },
 }

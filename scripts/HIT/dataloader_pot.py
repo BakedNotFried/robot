@@ -18,7 +18,7 @@ class DataLoaderLite:
         self.num_episodes = len(self.episode_files)
         assert self.num_episodes > 0, "No episodes found"
         print(f"Found {self.num_episodes} episodes")
-        keys = ['action', 'q_pos', 'field_images', 'progress']
+        keys = ['action', 'q_pos', 'oh_images', 'field_images', 'wrist_images', 'progress']
         
         # Load all episodes into memory
         self.actions = []
@@ -31,8 +31,8 @@ class DataLoaderLite:
                 data = self.extract_data_from_hdf5(file, keys)
                 self.actions.append(data[0])
                 self.q_pos.append(data[1])
-                self.field_images.append(data[2])
-                self.progress.append(data[3])
+                self.field_images.append(data[3])
+                self.progress.append(data[5])
     
     def extract_data_from_hdf5(self, file, keys):
         data = []

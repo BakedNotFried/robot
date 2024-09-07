@@ -65,13 +65,15 @@ class RobotDataCollector(InterbotixRobotNode):
         self.prev_tele_rpy = None
 
         # Scale Factor. For smoother control
-        self.xyz_scale = 6
+        # self.xyz_scale = 6
+        self.xyz_scale = 4.5
 
         # Establish the initial joint angless
         self.arm_joint_angles = START_ARM_POSE[:6]
         self.prev_joint_angles = self.arm_joint_angles
         self.robot.arm.set_joint_positions(START_ARM_POSE[:6], blocking=False)
         self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
+        # self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
         self.prev_gripper_joint = self.gripper_joint
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
@@ -109,7 +111,7 @@ class RobotDataCollector(InterbotixRobotNode):
 
         # Recording Info
         DATA_DIR = "/home/qutrll/data/"
-        save_dir = "pot_pick_place_2_60hz/"
+        save_dir = "shaker_pick_60hz/"
         self.save = True
         if self.save:
             self.save_dir = DATA_DIR + save_dir

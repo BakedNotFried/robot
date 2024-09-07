@@ -60,13 +60,13 @@ def train_bc(train_dataloader, val_dataloader, config):
     # Dataloader
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     assert device.type == "cuda", "CUDA is not available"
-    dataset_dir = '/home/qutrll/data/pot_pick_place_2_10hz'
+    dataset_dir = '/home/qutrll/data/wipe_10hz'
     episodes = os.listdir(dataset_dir)
     num_episodes = len(episodes)
     # num_episodes = 1
     train_episodes = int(num_episodes)
     train_indices = np.random.choice(num_episodes, size=train_episodes, replace=False)
-    train_loader = DataLoaderLite('/home/qutrll/data/pot_pick_place_2_10hz', 8, 10, 'train', train_indices)
+    train_loader = DataLoaderLite('/home/qutrll/data/wipe_10hz', 8, 10, 'train', train_indices)
     data = [None, None, None, None]
 
     for step in tqdm(range(num_steps+1)):

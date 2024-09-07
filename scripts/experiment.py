@@ -232,19 +232,19 @@ class RobotInference(InterbotixRobotNode):
         self.use_displays = True
         self.use_plots = False
         self.use_control = True
-        self.record_data = True
-        self.keyboard_control = False
+        self.record_data = False
+        self.keyboard_control = True
         self.joint_config_event = False
         self.num_experiment_steps = 30
         self.step_num = 0
         # event step 4 for VD
         self.event_step = 4
-        # task type. options: pot, shaker, cupboard
-        self.task_type = "pot"
+        # task type. options: pot, wipe, cupboard
+        self.task_type = "wipe"
         # trial type. options: IND, OODVD, OODHD
-        self.trial_type = "OODHD"
+        self.trial_type = "IND"
         # options mlp, vq, hit, ensemble, dropout
-        self.policy_type = "dropout"
+        self.policy_type = "hit"
         # options dm or simp
         self.world_model_type = ""
         if self.policy_type != "ensemble":
@@ -311,6 +311,10 @@ class RobotInference(InterbotixRobotNode):
             policy_class = 'HIT'
             if self.task_type == "pot":
                 config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/all_configs.json"
+            elif self.task_type == "cupboard":
+                config_dir = "/home/qutrll/data/checkpoints/HIT/cupboard/all_configs.json"
+            elif self.task_type == "wipe":
+                config_dir = "/home/qutrll/data/checkpoints/HIT/wipe/all_configs.json"
             config = json.load(open(config_dir))
             policy_config = config['policy_config']
 
@@ -322,6 +326,10 @@ class RobotInference(InterbotixRobotNode):
             self.policy.eval()
             if self.task_type == "pot":
                 loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_100000_seed_42.ckpt", map_location='cuda'))
+            elif self.task_type == "cupboard":
+                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/cupboard/policy_step_100000_seed_42.ckpt", map_location='cuda'))
+            elif self.task_type == "wipe":
+                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/wipe/policy_step_100000_seed_42.ckpt", map_location='cuda'))
             if not loading_status:
                 print(f'Failed to load policy_last.ckpt')
             self.policy.cuda()
@@ -639,9 +647,9 @@ class RobotInference(InterbotixRobotNode):
                 with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                     self.next_image = self.diffusion_world_model.sample(input_images, self.action_tensor, batch_size=1)
 
-            # For display
-            self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
-            self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
+                # For display
+                self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
+                self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
 
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
