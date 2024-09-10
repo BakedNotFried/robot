@@ -171,6 +171,9 @@ def create_hit_policy(seed, device):
 # Diffusion World Model
 from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 
+# Diffusion Policy
+from denoising_diffusion_pytorch import Unet1D, GaussianDiffusion1D
+
 # Metrics
 import lpips
 from torchmetrics.functional.image import peak_signal_noise_ratio
@@ -233,18 +236,18 @@ class RobotInference(InterbotixRobotNode):
         self.use_plots = False
         self.use_control = True
         self.record_data = False
-        self.keyboard_control = True
+        self.keyboard_control = False
         self.joint_config_event = False
         self.num_experiment_steps = 30
         self.step_num = 0
         # event step 4 for VD
         self.event_step = 4
         # task type. options: pot, wipe, cupboard
-        self.task_type = "wipe"
+        self.task_type = "pot"
         # trial type. options: IND, OODVD, OODHD
         self.trial_type = "IND"
-        # options mlp, vq, hit, ensemble, dropout
-        self.policy_type = "hit"
+        # options mlp, vq, hit, ensemble, dropout, dp
+        self.policy_type = "dp"
         # options dm or simp
         self.world_model_type = ""
         if self.policy_type != "ensemble":
@@ -372,6 +375,43 @@ class RobotInference(InterbotixRobotNode):
                 print(module)
 
             self.policy.cuda()
+        
+        # Diffusion Policy
+        elif self.policy_type == "dp":
+            # Load the policy
+            self.policy = Unet1D(
+                dim = 32,
+                dim_mults = (1, 2, 4),
+                channels = 8,
+                self_condition = False,
+            )
+            self.policy = self.policy.to(self.device)
+            use_compile = True
+            if use_compile:
+                self.policy = torch.compile(self.policy)
+            if self.task_type == "pot":
+                checkpoint_dir = "/home/qutrll/data/checkpoints/diff_policy/1/checkpoint_step_120006_seed_42.ckpt"
+            checkpoint = torch.load(checkpoint_dir)
+            self.policy.load_state_dict(checkpoint['model'])
+            self.policy.eval()
+
+            self.dp = GaussianDiffusion1D(
+                self.policy,
+                seq_length = 16,
+                timesteps = 100,
+                objective = 'pred_v'
+            )
+            self.dp.to(self.device)
+
+            # For scaling actions
+            with open("/home/qutrll/denoising-diffusion-pytorch/examples/action_stats.json", 'r') as f:
+                stats = json.load(f)
+            action_min = torch.tensor(stats['min'])
+            action_max = torch.tensor(stats['max'])
+            action_min = action_min.numpy()
+            action_max = action_max.numpy()
+            del stats
+            self.scale_actions = lambda x: x * (action_max - action_min) + action_min
 
 
         # Diffusion World Model Setup
@@ -433,22 +473,6 @@ class RobotInference(InterbotixRobotNode):
         self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-
-        # target_joint_angles = [angle + np.random.uniform(-0.65, 0.65) if i not in [0, 1, 2] else angle for i, angle in enumerate(self.arm_joint_angles)]
-        # target_joint_angles[0] += 1.9
-
-        # # Control Arms
-        # control_arms(
-        #     [self.robot],
-        #     [target_joint_angles],
-        #     [self.arm_joint_angles],
-        #     moving_time=1.5,
-        # )
-        # self.gripper_joint = np.random.uniform(-0.25, 0.25)
-        # self.robot_gripper_cmd.cmd = self.gripper_joint
-        # self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-        # self.arm_joint_angles = target_joint_angles
-        # input("\n Press Enter to continue from event...")
 
         # Output. Starts with arm joint angles, gripper joint, and progress
         self.output = self.arm_joint_angles + [self.gripper_joint] + [0.0]
@@ -600,6 +624,23 @@ class RobotInference(InterbotixRobotNode):
             output = output.float().cpu().numpy().squeeze()
             selection_index = 4
             output = output[selection_index]
+            self.output = output.tolist()
+            joints = self.output[:6]
+            gripper = self.output[6]
+            self.progress = self.output[-1]
+
+        elif self.policy_type == "dp":
+            # Policy Forward Pass
+            with torch.no_grad():
+                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    output = self.dp.sample(batch_size=1, cond_images=input_images)
+                    output = output.permute(0, 2, 1)
+            # Convert from torch, handling BFloat16
+            output = output.float().cpu().numpy().squeeze()
+            selection_index = 4
+            output = output[selection_index]
+            # Scale just the actions
+            output[0:7] = self.scale_actions(output[0:7])
             self.output = output.tolist()
             joints = self.output[:6]
             gripper = self.output[6]
