@@ -15,6 +15,9 @@ import torch.nn.functional as F
 from robot.policy3.model import PolicyCNNMLP
 from robot.policy3.world_model import WorldModel as CNNWorldModel
 
+# Simplest Policy
+from robot.simplest_policy.model import Policy
+
 # VQ-BET Policy + World Model
 import os
 from pathlib import Path
@@ -236,7 +239,7 @@ class RobotInference(InterbotixRobotNode):
         self.use_plots = False
         self.use_control = True
         self.record_data = False
-        self.keyboard_control = False
+        self.keyboard_control = True
         self.joint_config_event = False
         self.num_experiment_steps = 30
         self.step_num = 0
@@ -247,7 +250,7 @@ class RobotInference(InterbotixRobotNode):
         # trial type. options: IND, OODVD, OODHD
         self.trial_type = "IND"
         # options mlp, vq, hit, ensemble, dropout, dp
-        self.policy_type = "dp"
+        self.policy_type = "simp"
         # options dm or simp
         self.world_model_type = ""
         if self.policy_type != "ensemble":
@@ -277,6 +280,21 @@ class RobotInference(InterbotixRobotNode):
             if use_compile:
                 self.world_model = torch.compile(self.world_model)
             self.world_model.load_state_dict(checkpoint['world_model_state_dict'])
+
+        # Simplest Policy Setup
+        if self.policy_type == "simp":
+            seed_everything(42)
+            # Init Policy
+            if self.task_type == "pot":
+                checkpoint_path = '/home/qutrll/data/checkpoints/simplest_policy/1/checkpoint_step_60000_seed_42.ckpt'
+            checkpoint = torch.load(checkpoint_path)
+            self.policy = Policy()
+            self.policy = self.policy.to(self.device)
+            self.policy.eval()
+            use_compile = False
+            if use_compile:
+                self.policy = torch.compile(self.policy)
+            self.policy.load_state_dict(checkpoint['model_state_dict'])
 
         # VQBET Policy Setup
         elif self.policy_type == "vq":
@@ -619,6 +637,22 @@ class RobotInference(InterbotixRobotNode):
             # For display
             self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
             self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
+
+            # Convert from torch, handling BFloat16
+            output = output.float().cpu().numpy().squeeze()
+            selection_index = 4
+            output = output[selection_index]
+            self.output = output.tolist()
+            joints = self.output[:6]
+            gripper = self.output[6]
+            self.progress = self.output[-1]
+
+        # Policy Simp
+        if self.policy_type == "simp":
+            # Policy Forward Pass
+            with torch.no_grad():
+                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    output = self.policy(input_images, self.q_pos_tensor)
 
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
