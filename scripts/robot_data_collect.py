@@ -88,7 +88,7 @@ class RobotDataCollector(InterbotixRobotNode):
         # Set up subscribers for image topics
         # self.overhead_sub = Subscriber(self, Image, '/cam_overhead/camera/color/image_raw')
         self.field_sub = Subscriber(self, Image, '/cam_field/camera/color/image_raw')
-        # self.wrist_sub = Subscriber(self, Image, '/cam_wrist/camera/color/image_rect_raw')
+        self.wrist_sub = Subscriber(self, Image, '/cam_wrist/camera/color/image_rect_raw')
 
         # Set up subscriber for OmniState
         # Control Callback based on Omni Teleoperation State. Check Omni State for publish rate - currently 60Hz
@@ -102,16 +102,22 @@ class RobotDataCollector(InterbotixRobotNode):
         #     allow_headerless=False
         # )
         self.ts = ApproximateTimeSynchronizer(
-            [self.field_sub, self.omni_sub],
+            [self.field_sub, self.wrist_sub, self.omni_sub],
             queue_size=3,
             slop=0.015,
             allow_headerless=False
         )
+        # self.ts = ApproximateTimeSynchronizer(
+        #     [self.field_sub, self.omni_sub],
+        #     queue_size=3,
+        #     slop=0.015,
+        #     allow_headerless=False
+        # )
         self.ts.registerCallback(self.synchronized_callback)
 
         # Recording Info
         DATA_DIR = "/home/qutrll/data/"
-        save_dir = "shaker_pick_60hz/"
+        save_dir = "grid_2_60hz/"
         self.save = True
         if self.save:
             self.save_dir = DATA_DIR + save_dir
@@ -125,7 +131,7 @@ class RobotDataCollector(InterbotixRobotNode):
         }
         # self.im_oh = []
         self.im_field = []
-        # self.im_wrist = []
+        self.im_wrist = []
 
         # # Diagnostics
         # # Diagnostic counters
@@ -151,7 +157,7 @@ class RobotDataCollector(InterbotixRobotNode):
         # self.control_durations = deque(maxlen=100)  # Store last 100 control operation durations
 
 
-    def synchronized_callback(self, field_msg, omni_msg):
+    def synchronized_callback(self, field_msg, wrist_msg, omni_msg):
         # # Diagnostics
         # self.total_callbacks += 1
         # self.successful_syncs += 1
@@ -165,7 +171,7 @@ class RobotDataCollector(InterbotixRobotNode):
         # Process images
         # self.overhead_image = self.process_image(overhead_msg)
         self.field_image = self.process_image(field_msg)
-        # self.wrist_image = self.process_image(wrist_msg)
+        self.wrist_image = self.process_image(wrist_msg)
 
         # Process OmniState
         self.robot_control_callback(omni_msg)
@@ -180,7 +186,7 @@ class RobotDataCollector(InterbotixRobotNode):
         self.robot.core.robot_reboot_motors('single', 'gripper', True)
         self.robot.core.robot_set_operating_modes('group', 'arm', 'position')
         self.robot.core.robot_set_operating_modes('single', 'gripper', 'current_based_position')
-        self.robot.core.robot_set_motor_registers('single', 'gripper', 'current_limit', 500)
+        self.robot.core.robot_set_motor_registers('single', 'gripper', 'current_limit', 650)
         torque_on(self.robot)
         
         # move arm to starting position
@@ -245,7 +251,7 @@ class RobotDataCollector(InterbotixRobotNode):
                         self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
                         # self.im_oh.append(self.overhead_image.copy())
                         self.im_field.append(self.field_image.copy())
-                        # self.im_wrist.append(self.wrist_image.copy())
+                        self.im_wrist.append(self.wrist_image.copy())
                     
                     # Set the prev
                     self.prev_tele_xyz = curr_tele_xyz
@@ -272,8 +278,10 @@ class RobotDataCollector(InterbotixRobotNode):
                     self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
                 if close_gripper:
                     self.gripper_joint -= self.gripper_delta
-                    if self.gripper_joint < ROBOT_GRIPPER_JOINT_CLOSE_MAX:
-                        self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
+                    # if self.gripper_joint < ROBOT_GRIPPER_JOINT_CLOSE_MAX:
+                    #     self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
+                    if self.gripper_joint < ROBOT_GRIPPER_JOINT_MID - 0.5:
+                        self.gripper_joint = ROBOT_GRIPPER_JOINT_MID - 0.5
                     self.robot_gripper_cmd.cmd = self.gripper_joint
                     self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
 
@@ -288,7 +296,7 @@ class RobotDataCollector(InterbotixRobotNode):
                         self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
                         # self.im_oh.append(self.overhead_image.copy())
                         self.im_field.append(self.field_image.copy())
-                        # self.im_wrist.append(self.wrist_image.copy())
+                        self.im_wrist.append(self.wrist_image.copy())
                     
                     # Set the prev
                     self.prev_tele_xyz = curr_tele_xyz
@@ -328,7 +336,7 @@ class RobotDataCollector(InterbotixRobotNode):
                     self.data_dict['action'].append(self.arm_joint_angles + [self.gripper_joint])
                     # self.im_oh.append(self.overhead_image.copy())
                     self.im_field.append(self.field_image.copy())
-                    # self.im_wrist.append(self.wrist_image.copy())
+                    self.im_wrist.append(self.wrist_image.copy())
 
                 # Set the prev
                 self.prev_tele_xyz = curr_tele_xyz
@@ -413,7 +421,7 @@ class RobotDataCollector(InterbotixRobotNode):
                 # Save images
                 # f.create_dataset('oh_images', data=np.array(self.im_oh))
                 f.create_dataset('field_images', data=np.array(self.im_field))
-                # f.create_dataset('wrist_images', data=np.array(self.im_wrist))
+                f.create_dataset('wrist_images', data=np.array(self.im_wrist))
             print(f"Data Saved to HDF5 file: {hdf5_path}")
         else:
             print("Data Not Saved")
@@ -428,7 +436,7 @@ class RobotDataCollector(InterbotixRobotNode):
         }
         # self.im_oh = []
         self.im_field = []
-        # self.im_wrist = []
+        self.im_wrist = []
 
 
     def process_image(self, msg):

@@ -15,6 +15,9 @@ import torch.nn.functional as F
 from robot.policy3.model import PolicyCNNMLP
 from robot.policy3.world_model import WorldModel as CNNWorldModel
 
+# Simplest Policy
+# from robot.simplest_policy.model import Policy
+
 # VQ-BET Policy + World Model
 import os
 from pathlib import Path
@@ -23,6 +26,9 @@ from hydra import compose, initialize
 from omegaconf import OmegaConf
 import torch.nn as nn
 config_name = "train_widow"
+
+# Mobile Policy
+from robot.mobile_policy.multi_model import MobilePolicy
 
 def normalize_to_neg_one_to_one(img):
     return img * 2 - 1
@@ -247,229 +253,24 @@ class RobotInference(InterbotixRobotNode):
         # trial type. options: IND, OODVD, OODHD
         self.trial_type = "IND"
         # options mlp, vq, hit, ensemble, dropout, dp
-        self.policy_type = "mlp"
+        self.policy_type = "mobile"
         # options dm or simp
         self.world_model_type = ""
-        if self.policy_type != "ensemble":
-            self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "_" + self.world_model_type + "/" + self.trial_type
-        else:
-            self.record_save_dir = "/home/qutrll/data/experiments/" + self.task_type + "/" + self.policy_type + "/" + self.trial_type
         
-        # CNNMLP Policy Setup
-        if self.policy_type == "mlp":
+        # Polcicies        
+        if self.policy_type == "mobile":
             seed_everything(42)
             # Init Policy
             if self.task_type == "pot":
-                checkpoint_path = '/home/qutrll/data/checkpoints/cnn_mlp/1/checkpoint_step_100000_seed_42.ckpt'
+                checkpoint_path = '/home/qutrll/data/checkpoints/multi_task_mobile/1/checkpoint_step_200000_seed_42.ckpt'
             checkpoint = torch.load(checkpoint_path)
-            self.policy = PolicyCNNMLP()
-            self.policy = self.policy.to(self.device)
-            self.policy.eval()
-            use_compile = True
-            if use_compile:
-                self.policy = torch.compile(self.policy)
-            self.policy.load_state_dict(checkpoint['model_state_dict'])
-
-            if self.world_model_type == "cnn":
-                # Init World Model
-                self.world_model = CNNWorldModel(latent_dim=1792, action_dim=80)
-                self.world_model = self.world_model.to(self.device)
-                self.world_model.eval()
-                if use_compile:
-                    self.world_model = torch.compile(self.world_model)
-                self.world_model.load_state_dict(checkpoint['world_model_state_dict'])
-
-        # Simplest Policy Setup
-        if self.policy_type == "simp":
-            seed_everything(42)
-            # Init Policy
-            if self.task_type == "pot":
-                checkpoint_path = '/home/qutrll/data/checkpoints/simplest_policy/1/checkpoint_step_60000_seed_42.ckpt'
-            checkpoint = torch.load(checkpoint_path)
-            self.policy = Policy()
+            self.policy = MobilePolicy()
             self.policy = self.policy.to(self.device)
             self.policy.eval()
             use_compile = False
             if use_compile:
                 self.policy = torch.compile(self.policy)
             self.policy.load_state_dict(checkpoint['model_state_dict'])
-
-        # VQBET Policy Setup
-        elif self.policy_type == "vq":
-            # Calculate the relative path
-            if self.task_type == "pot":
-                current_dir = Path('/home/qutrll/interbotix_ws/src/robot/scripts/')
-                config_path = Path('/home/qutrll/interbotix_ws/src/robot/robot/vq_bet_official/examples/configs/train_widow.yaml')
-            relative_path = os.path.relpath(config_path.parent, current_dir)
-
-            # Initialize Hydra with the relative path
-            initialize(config_path=relative_path, version_base="1.2")
-            
-            # Load the configuration
-            cfg = compose(config_name="train_widow")
-            print(OmegaConf.to_yaml(cfg))
-
-            seed_everything(cfg.seed)
-
-            cfg.model.gpt_model.config.input_dim = 1024
-            self.cbet_model = hydra.utils.instantiate(cfg.model).to(cfg.device)
-            self.cbet_model.eval()
-            load_path = Path(cfg.save_path)
-            self.cbet_model.load_model(load_path)
-
-            # World Model Setup
-            self.world_model = VQWorldModel(latent_dim=256, action_dim=80)
-            self.world_model = self.world_model.to(cfg.device)
-            self.world_model.eval()
-            if self.task_type == "pot":
-                world_model_path = "/home/qutrll/data/checkpoints/vq_bet/model/4/world_model.pt"
-            self.world_model.load_state_dict(torch.load(world_model_path))
-
-        # HIT Policy Setup
-        elif self.policy_type == "hit":
-            policy_class = 'HIT'
-            if self.task_type == "pot":
-                config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/all_configs.json"
-            elif self.task_type == "cupboard":
-                config_dir = "/home/qutrll/data/checkpoints/HIT/cupboard/all_configs.json"
-            elif self.task_type == "wipe":
-                config_dir = "/home/qutrll/data/checkpoints/HIT/wipe/all_configs.json"
-            config = json.load(open(config_dir))
-            policy_config = config['policy_config']
-
-            seed_everything(42)
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            assert self.device == torch.device("cuda"), "CUDA is not available"
-
-            self.policy = make_policy(policy_class, policy_config)
-            self.policy.eval()
-            if self.task_type == "pot":
-                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/3/_pot_pick_place_HIT_resnet18_True/policy_step_100000_seed_42.ckpt", map_location='cuda'))
-            elif self.task_type == "cupboard":
-                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/cupboard/policy_step_100000_seed_42.ckpt", map_location='cuda'))
-            elif self.task_type == "wipe":
-                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/wipe/policy_step_100000_seed_42.ckpt", map_location='cuda'))
-            if not loading_status:
-                print(f'Failed to load policy_last.ckpt')
-            self.policy.cuda()
-        
-        # Ensemble of HIT Policies
-        elif self.policy_type == "ensemble":
-            self.policies = []
-            seeds = [42, 43, 44, 45, 46]
-            # Create each policy
-            for seed in seeds:
-                self.policies.append(create_hit_policy(seed, self.device))
-        
-        elif self.policy_type == "dropout":
-            policy_class = 'HIT'
-            if self.task_type == "pot":
-                config_dir = "/home/qutrll/data/checkpoints/HIT/pot_pick_place/dropout/all_configs.json"
-            config = json.load(open(config_dir))
-            policy_config = config['policy_config']
-
-            seed_everything(42)
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            assert self.device == torch.device("cuda"), "CUDA is not available"
-
-            self.policy = make_policy(policy_class, policy_config)
-            self.policy.eval()
-            if self.task_type == "pot":
-                loading_status = self.policy.deserialize(torch.load("/home/qutrll/data/checkpoints/HIT/pot_pick_place/dropout/policy_step_100000_seed_42.ckpt", map_location='cuda'))
-            if not loading_status:
-                print(f'Failed to load policy_last.ckpt')
-
-            # Adjust dropout probability and enable dropout
-            for module in self.policy.modules():
-                if isinstance(module, (torch.nn.Dropout, torch.nn.Dropout2d)):
-                    module.p = 0.6  # Set dropout probability to 0.5
-                    module.train()
-                    print(f"Adjusted and enabled: {module}")
-
-            # Print every module
-            for module in self.policy.modules():
-                print(module)
-
-            self.policy.cuda()
-        
-        # Diffusion Policy
-        elif self.policy_type == "dp":
-            # Load the policy
-            self.policy = Unet1D(
-                dim = 32,
-                dim_mults = (1, 2, 4),
-                channels = 8,
-                self_condition = False,
-            )
-            self.policy = self.policy.to(self.device)
-            use_compile = True
-            if use_compile:
-                self.policy = torch.compile(self.policy)
-            if self.task_type == "pot":
-                checkpoint_dir = "/home/qutrll/data/checkpoints/diff_policy/1/checkpoint_step_120006_seed_42.ckpt"
-            checkpoint = torch.load(checkpoint_dir)
-            self.policy.load_state_dict(checkpoint['model'])
-            self.policy.eval()
-
-            self.dp = GaussianDiffusion1D(
-                self.policy,
-                seq_length = 16,
-                timesteps = 100,
-                objective = 'pred_v'
-            )
-            self.dp.to(self.device)
-
-            # For scaling actions
-            with open("/home/qutrll/denoising-diffusion-pytorch/examples/action_stats.json", 'r') as f:
-                stats = json.load(f)
-            action_min = torch.tensor(stats['min'])
-            action_max = torch.tensor(stats['max'])
-            action_min = action_min.numpy()
-            action_max = action_max.numpy()
-            del stats
-            self.scale_actions = lambda x: x * (action_max - action_min) + action_min
-
-
-        # Diffusion World Model Setup
-        if self.world_model_type == "dm":
-            if self.task_type == "pot":
-                with open("/home/qutrll/denoising-diffusion-pytorch/examples/action_stats.json", 'r') as f:
-                    stats = json.load(f)
-            action_mean = torch.tensor(stats['mean']).to(self.device)
-            action_std = torch.tensor(stats['std']).to(self.device)
-            action_min = torch.tensor(stats['min']).to(self.device)
-            action_max = torch.tensor(stats['max']).to(self.device)
-            del stats
-            self.normalize_actions = lambda x: (x - action_mean) / action_std
-            self.scale_actions = lambda x: (x - action_min) * (1.0 - (-1.0)) / (action_max - action_min) + (-1.0)
-
-            # Create Unet
-            self.world_model = Unet(
-                dim = 64,
-                dim_mults = (1, 2, 4, 8),
-                channels=3,
-                flash_attn = True
-            )
-            self.world_model = self.world_model.to(self.device)
-            use_compile = True
-            if use_compile:
-                self.world_model = torch.compile(self.world_model)
-            
-            # Create Diffusion based World Model
-            self.diffusion_world_model = GaussianDiffusion(
-                self.world_model,
-                self.device,
-                image_size = 224,
-                timesteps = 100
-            )
-            self.diffusion_world_model = self.diffusion_world_model.to(self.device)
-
-            # Load checkpoints
-            if self.task_type == "pot":
-                checkpoint_dir = "/home/qutrll/data/checkpoints/diffusion_wm/3/checkpoint_step_80004_seed_42.ckpt"
-            checkpoint = torch.load(checkpoint_dir)
-            self.world_model.load_state_dict(checkpoint['world_model'])
-            self.world_model.eval()
 
         # Cameras Setup
         self.height = 240
@@ -489,6 +290,7 @@ class RobotInference(InterbotixRobotNode):
         self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
+        self.task_index = torch.tensor([0], dtype=torch.long, device=self.device)
 
         # Output. Starts with arm joint angles, gripper joint, and progress
         self.output = self.arm_joint_angles + [self.gripper_joint] + [0.0]
@@ -571,71 +373,25 @@ class RobotInference(InterbotixRobotNode):
         if self.use_displays:
             self.display_images()
         
-        if self.joint_config_event:
-            input("\n Press Enter to continue from event...")
-
         # Convert images to tensors and normalize
         self.images_tensor[0, 0] = torch.from_numpy(self.field_image).float().permute(2, 0, 1) / 255.0
         reshaped_tensor = self.images_tensor.squeeze(1)
         self.reshaped_images_tensor = F.interpolate(reshaped_tensor, size=(224, 224), mode='bilinear', align_corners=False)
         self.reshaped_images_tensor = self.reshaped_images_tensor.unsqueeze(0)
-        # Convert prev action to tensor
-        if self.joint_config_event:
-            q_pos = self.arm_joint_angles + [self.gripper_joint]
-            self.q_pos_tensor[0] = torch.tensor(q_pos, dtype=torch.float32, device=self.device)
-            self.joint_config_event = False
-        else:
-            self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
+        self.q_pos_tensor[0] = torch.tensor(self.output[:7], dtype=torch.float32, device=self.device)
 
         if self.first_run:
             self.first_run = False
             self.prev_images_tensor = self.reshaped_images_tensor
         
-        # Visual Metrics
-        if self.next_image is not None:
-            # Lpips
-            # Scale images to -1 to 1
-            d = self.lpips_loss_fn(normalize_to_neg_one_to_one(self.reshaped_images_tensor.squeeze(0)), normalize_to_neg_one_to_one(self.next_image))
-            self.lpips_data.append(d.item())
-
-            # PSNR
-            psnr_score = peak_signal_noise_ratio(self.reshaped_images_tensor.squeeze(0), self.next_image)
-            self.psnr_data.append(psnr_score.item())
-        
-        if self.use_plots and self.next_image is not None:
-            # Update the plots
-            lpips = self.lpips_data[-1] if self.lpips_data else 0
-            self.update_plots(lpips, self.progress)
-
         # Stack the images for the next iteration
         input_images = torch.cat([self.prev_images_tensor, self.reshaped_images_tensor], dim=1)
 
-        # Policy and World Model Steps
-        if self.policy_type == "mlp":
+        if self.policy_type == "mobile":
             # Policy Forward Pass
             with torch.no_grad():
-                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    output, hs = self.policy(input_images, self.q_pos_tensor)
+                output = self.policy(input_images, self.q_pos_tensor, self.task_index)
             
-            # # World Model Forward Pass
-            # with torch.no_grad():
-            #     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-            #         self.next_image = self.world_model(hs, output)
-
-            # # For display
-            # self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
-            # self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
-            if self.world_model_type == "dm":
-                self.action_tensor[0, 0:-1] = self.normalize_actions(output[:,5,0:-1])
-                self.action_tensor[0, 0:-1] = self.scale_actions(self.action_tensor[0, 0:-1])
-                self.action_tensor[0, -1] = output[:,5,-1]
-                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    self.next_image = self.diffusion_world_model.sample(input_images, self.action_tensor, batch_size=1)
-
-                # For display
-                self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
-                self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
-
             # Convert from torch, handling BFloat16
             output = output.float().cpu().numpy().squeeze()
             selection_index = 4
@@ -644,135 +400,6 @@ class RobotInference(InterbotixRobotNode):
             joints = self.output[:6]
             gripper = self.output[6]
             self.progress = self.output[-1]
-
-        # Policy Simp
-        if self.policy_type == "simp":
-            # Policy Forward Pass
-            with torch.no_grad():
-                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    output = self.policy(input_images, self.q_pos_tensor)
-
-            # Convert from torch, handling BFloat16
-            output = output.float().cpu().numpy().squeeze()
-            selection_index = 4
-            output = output[selection_index]
-            self.output = output.tolist()
-            joints = self.output[:6]
-            gripper = self.output[6]
-            self.progress = self.output[-1]
-
-        elif self.policy_type == "dp":
-            # Policy Forward Pass
-            with torch.no_grad():
-                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    output = self.dp.sample(batch_size=1, cond_images=input_images)
-                    output = output.permute(0, 2, 1)
-            # Convert from torch, handling BFloat16
-            output = output.float().cpu().numpy().squeeze()
-            selection_index = 4
-            output = output[selection_index]
-            # Scale just the actions
-            output[0:7] = self.scale_actions(output[0:7])
-            self.output = output.tolist()
-            joints = self.output[:6]
-            gripper = self.output[6]
-            self.progress = self.output[-1]
-
-
-        elif self.policy_type == "vq":
-            # Policy Forward Pass
-            with torch.no_grad():
-                output, policy_loss, loss_dict, hs_output = self.cbet_model(input_images, self.q_pos_tensor, None, None)
-            # Forward pass through world model
-            with torch.no_grad():
-                self.next_image = self.world_model(hs_output, output)
-
-            # For display
-            self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
-            self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
-
-            # Convert from torch, handling BFloat16
-            output = output.float().cpu().numpy().squeeze()
-            selection_index = 4
-            output = output[selection_index]
-            self.output = output.tolist()
-            joints = self.output[:6]
-            gripper = self.output[6]
-            self.progress = self.output[-1]
-
-        elif self.policy_type == "hit":
-            # Policy Forward Pass
-            with torch.no_grad():
-                output, hs_img = self.policy.forward_inf(self.q_pos_tensor, input_images)
-
-            # # World Model Forward Pass
-            # with torch.no_grad():
-            #     self.next_image = self.policy.forward_world_model(hs_img, output)
-
-            # # For display
-            # self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
-            # self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
-
-            if self.world_model_type == "dm":
-                self.action_tensor[0, 0:-1] = self.normalize_actions(output[:,5,0:-1])
-                self.action_tensor[0, 0:-1] = self.scale_actions(self.action_tensor[0, 0:-1])
-                self.action_tensor[0, -1] = output[:,5,-1]
-                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    self.next_image = self.diffusion_world_model.sample(input_images, self.action_tensor, batch_size=1)
-
-                # For display
-                self.predicted_image = self.next_image.squeeze().float().permute(1, 2, 0).cpu().numpy()
-                self.predicted_image = (self.predicted_image * 255).astype(np.uint8)
-
-            # Convert from torch, handling BFloat16
-            output = output.float().cpu().numpy().squeeze()
-            selection_index = 4
-            output = output[selection_index]
-            self.output = output.tolist()
-            joints = self.output[:6]
-            gripper = self.output[6]
-            self.progress = self.output[-1]
-        
-        elif self.policy_type == "ensemble":
-            # Policy Forward Pass
-            actions = []
-            for policy in self.policies:
-                with torch.no_grad():
-                    output, hs = policy.forward_inf(self.q_pos_tensor, input_images)
-                actions.append(output)
-            actions = torch.stack(actions, dim=1)
-            output = actions.mean(dim=1).squeeze()
-            selection_index = 4
-            ensemble_output_variance = actions.squeeze().var(dim=0)[selection_index][0:7]
-            # Convert from torch, handling BFloat16
-            output = output.float().cpu().numpy().squeeze()
-            output = output[selection_index]
-            self.output = output.tolist()
-            joints = self.output[:6]
-            gripper = self.output[6]
-            self.progress = self.output[-1]
-        
-        elif self.policy_type == "dropout":
-            # Policy Forward Pass
-            actions = []
-            for i in range(5):
-                with torch.no_grad():
-                    output, hs = self.policy.forward_inf(self.q_pos_tensor, input_images)
-                actions.append(output)
-            actions = torch.stack(actions, dim=1)
-            output = actions.mean(dim=1).squeeze()
-            selection_index = 4
-            ensemble_output_variance = actions.squeeze().var(dim=0)[selection_index][0:7]
-            # Convert from torch, handling BFloat16
-            output = output.float().cpu().numpy().squeeze()
-            output = output[selection_index]
-            self.output = output.tolist()
-            joints = self.output[:6]
-            gripper = self.output[6]
-            self.progress = self.output[-1]
-
-        if self.keyboard_control:
-            input("Press Enter to continue...")
 
         # Control Robot
         self.robot_gripper_cmd.cmd = gripper
@@ -785,88 +412,17 @@ class RobotInference(InterbotixRobotNode):
                 moving_time=0.4,
             )
         self.arm_joint_angles = joints
-        
+
+        if self.keyboard_control:
+            user_input = input("Press Enter to continue...")
+            if user_input == "w":
+                self.reset_experiment("wipe")
+            elif user_input == "c":
+                self.reset_experiment("cupboard")  
+
         # Update the previous images tensor
         self.prev_images_tensor = self.reshaped_images_tensor
 
-        # Record Data
-        if self.record_data and (self.policy_type not in ["ensemble", "dropout"]):
-            if self.step_num <= self.num_experiment_steps:
-                print(f"Step {self.step_num}/{self.num_experiment_steps}")
-                self.image_actual_data.append(self.reshaped_images_tensor.squeeze(0).cpu().numpy())
-                self.image_predicted_data.append(self.next_image.cpu().numpy())
-                self.progress_data.append(self.progress)
-                self.joint_states_data.append(self.output[:7])
-                # Check if any variables are none
-                assert self.reshaped_images_tensor is not None, "reshaped_images_tensor is None"
-                assert self.next_image is not None, "next_image is None"
-                assert self.progress is not None, "progress is None"
-                assert self.output is not None, "output is None"
-                self.step_num += 1
-            
-            elif self.step_num > self.num_experiment_steps:
-                print("Experiment Complete. Saving Data....")
-                # Save data
-                save_experiment_data(self.record_save_dir, self.image_actual_data, self.image_predicted_data, self.progress_data, self.joint_states_data)
-
-                # Get User input
-                user_input = input("\n Press 'r' to reset data: ")
-                if user_input == 'r':
-                    self.reset_record_data()
-                    self.reset_experiment()
-                    self.step_num = 0
-                    print("Experiment Reset")
-
-        elif self.record_data and (self.policy_type == "ensemble" or self.policy_type == "dropout"):
-            if self.step_num <= self.num_experiment_steps:
-                print(f"Step {self.step_num}/{self.num_experiment_steps}")
-                self.image_actual_data.append(self.reshaped_images_tensor.squeeze(0).cpu().numpy())
-                self.progress_data.append(self.progress)
-                self.joint_states_data.append(self.output[:7])
-                self.action_data.append(self.output[:7])
-                self.action_variance_data.append(ensemble_output_variance.squeeze().cpu().numpy())
-                # Check if any variables are none
-                assert self.reshaped_images_tensor is not None, "reshaped_images_tensor is None"
-                assert self.progress is not None, "progress is None"
-                assert self.output is not None, "output is None"
-                assert ensemble_output_variance is not None, "ensemble_output_variance is None"
-                self.step_num += 1
-            
-            elif self.step_num > self.num_experiment_steps:
-                print("Experiment Complete. Saving Data....")
-                # Save data
-                save_ensemble_data(self.record_save_dir, self.image_actual_data, self.progress_data, self.joint_states_data, self.action_data, self.action_variance_data)
-
-                # Get User input
-                user_input = input("\n Press 'r' to reset data: ")
-                if user_input == 'r':
-                    self.reset_record_data()
-                    self.reset_experiment()
-                    self.step_num = 0
-                    print("Experiment Reset")
-
-        # Event Step
-        if self.trial_type != "IND" and self.step_num == self.event_step:
-            input("\n Press Enter to continue from event...")
-            if self.trial_type == "OODJC":
-                # Add random noise to the joint angles
-                target_joint_angles = [angle + np.random.uniform(-0.65, 0.65) if i not in [0, 1, 2] else angle for i, angle in enumerate(self.arm_joint_angles)]
-                target_joint_angles[0] += 1.3
-
-                # Control Arms
-                control_arms(
-                    [self.robot],
-                    [target_joint_angles],
-                    [self.arm_joint_angles],
-                    moving_time=1.5,
-                )
-                self.gripper_joint = np.random.uniform(-0.25, 0.25)
-                self.robot_gripper_cmd.cmd = self.gripper_joint
-                self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
-                self.arm_joint_angles = target_joint_angles
-                input("\n Press Enter to continue from event...")
-                self.joint_config_event = True
-    
 
     def reset_record_data(self):
         self.image_actual_data = []
@@ -1054,7 +610,7 @@ class RobotInference(InterbotixRobotNode):
             moving_time=1.5,
         )
 
-    def reset_experiment(self):
+    def reset_experiment(self, task):
         """Move robot arm to start demonstration pose"""
         # move arm to starting position
         start_arm_qpos = START_ARM_POSE[:6]
@@ -1062,13 +618,18 @@ class RobotInference(InterbotixRobotNode):
             [self.robot],
             [start_arm_qpos],
             [self.arm_joint_angles],
-            moving_time=2.5,
+            moving_time=1.5,
         )
 
         # Establish the initial joint angles
         self.arm_joint_angles = START_ARM_POSE[:6]
         self.robot.arm.set_joint_positions(START_ARM_POSE[:6], blocking=False)
-        self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
+        if task == "wipe":
+            self.gripper_joint = ROBOT_GRIPPER_JOINT_MID
+            self.task_index = torch.tensor([0], dtype=torch.long, device=self.device)
+        elif task == "cupboard":
+            self.gripper_joint = ROBOT_GRIPPER_JOINT_CLOSE_MAX
+            self.task_index = torch.tensor([1], dtype=torch.long, device=self.device)
         self.robot_gripper_cmd.cmd = self.gripper_joint
         self.robot.gripper.core.pub_single.publish(self.robot_gripper_cmd)
 
